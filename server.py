@@ -3,6 +3,7 @@ import os
 import queue
 import secrets
 import threading
+import traceback
 
 from assemblyai.streaming.v3 import (
     BeginEvent,
@@ -108,8 +109,9 @@ async def ws_endpoint(websocket: WebSocket):
         print(f"[HEARD] {text}")
         try:
             session.process_sync(text)  # blocking: fine, this thread's only job is this session
-        except Exception as e:
-            print(f"[session] pipeline error: {e}")
+        except Exception:
+            print("[session] pipeline error:")
+            traceback.print_exc()
 
     def on_terminated(client, event: TerminationEvent):
         print(f"[session] done: {event.audio_duration_seconds}s processed")
