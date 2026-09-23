@@ -3,7 +3,12 @@ import sqlite3
 import time
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "amanat.db"
+# Railway wipes the container's own filesystem on every redeploy. If a persistent
+# volume is mounted at /data (see DEPLOY.md), use it so visit history survives
+# deploys; otherwise fall back to a local file next to this script for local dev.
+_default_path = "/data/amanat.db" if Path("/data").exists() else str(Path(__file__).parent / "amanat.db")
+import os
+DB_PATH = Path(os.environ.get("DB_PATH", _default_path))
 
 
 def _connect():
