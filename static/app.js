@@ -1,5 +1,5 @@
 // Change this to your deployed Railway backend's WebSocket URL before publishing to GitHub Pages.
-const BACKEND_WS_URL = "wss://YOUR-RAILWAY-APP.up.railway.app/ws";
+const BACKEND_WS_URL = "wss://web-production-11fd82.up.railway.app/ws";
 
 const ECHO_TAIL_MS = 600; // matches ECHO_TAIL_SECONDS in the original tts.py
 
