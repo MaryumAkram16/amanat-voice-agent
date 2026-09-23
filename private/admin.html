@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Amanat — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0B0E14; --bg-elev: #12161F; --border: rgba(255,255,255,0.09);
+    --text: #F2F4F7; --text-soft: #8A93A3;
+    --amber: #FF9B45; --cyan: #2FD4C4; --danger: #FF5C72;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Inter", sans-serif; padding: 32px; }
+  h1 { font-family: "Space Grotesk", sans-serif; font-size: 1.4rem; margin: 0 0 24px; }
+  .stats { display: flex; gap: 16px; margin-bottom: 28px; }
+  .stat { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; padding: 18px 24px; }
+  .stat .num { font-family: "Space Grotesk", sans-serif; font-size: 1.8rem; font-weight: 700; }
+  .stat.escalated .num { color: var(--danger); }
+  .stat .label { color: var(--text-soft); font-size: 0.85rem; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; font-size: 0.88rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-soft); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr.escalate td { background: rgba(255,92,114,0.07); }
+  tr.escalate td:first-child { border-left: 3px solid var(--danger); }
+  .empty { color: var(--text-soft); padding: 24px; text-align: center; }
+  .refresh { color: var(--text-soft); font-size: 0.8rem; margin-top: 16px; }
+</style>
+</head>
+<body>
+  <h1>Amanat — recorded visits</h1>
+  <div class="stats">
+    <div class="stat"><div class="num" id="totalNum">-</div><div class="label">Total visits</div></div>
+    <div class="stat escalated"><div class="num" id="escNum">-</div><div class="label">Escalated</div></div>
+  </div>
+  <table id="visitTable">
+    <thead>
+      <tr><th>Time</th><th>Patient</th><th>Symptoms</th><th>Vitals</th><th>Notes</th><th>Status</th></tr>
+    </thead>
+    <tbody id="visitBody"></tbody>
+  </table>
+  <div class="refresh">Refreshes every 5 seconds.</div>
+
+<script>
+async function load() {
+  const res = await fetch("/api/visits");
+  if (!res.ok) return;
+  const data = await res.json();
+  document.getElementById("totalNum").textContent = data.stats.total;
+  document.getElementById("escNum").textContent = data.stats.escalated;
+
+  const body = document.getElementById("visitBody");
+  body.innerHTML = "";
+  if (data.visits.length === 0) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No visits recorded yet.</td></tr>';
+    return;
+  }
+  for (const v of data.visits) {
+    const tr = document.createElement("tr");
+    if (v.escalate) tr.className = "escalate";
+    const symptoms = JSON.parse(v.symptoms || "[]").join(", ") || "—";
+    const vitals = [v.vitals_temp, v.vitals_bp].filter(Boolean).join(" / ") || "—";
+    const time = new Date(v.recorded_at * 1000).toLocaleString();
+    tr.innerHTML = `
+      <td>${time}</td>
+      <td>${v.patient_name || "(no name)"}</td>
+      <td>${symptoms}</td>
+      <td>${vitals}</td>
+      <td>${v.notes || "—"}</td>
+      <td>${v.escalate ? "Escalated: " + (v.reason || "") : "Recorded"}</td>
+    `;
+    body.appendChild(tr);
+  }
+}
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>
