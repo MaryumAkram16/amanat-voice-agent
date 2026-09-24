@@ -238,7 +238,22 @@
   .navlinks { display: flex; gap: 26px; font-size: 0.9rem; color: var(--text-soft); }
   .navlinks a { color: var(--text-soft); text-decoration: none; }
   .navlinks a:hover { color: var(--text); }
-  @media (max-width: 560px) { .navlinks { display: none; } }
+  .menu-btn {
+    display: none; background: none; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); font-size: 1.1rem; line-height: 1; padding: 7px 10px; cursor: pointer;
+  }
+  /* Phones: the links move into a drop-down opened by the ☰ button, so Admin stays reachable. */
+  @media (max-width: 560px) {
+    .menu-btn { display: block; }
+    .navlinks {
+      display: none; position: absolute; top: 100%; left: 0; right: 0;
+      flex-direction: column; gap: 0; background: rgba(11,14,20,0.97);
+      border-bottom: 1px solid var(--border); padding: 6px 16px 12px;
+    }
+    .navlinks.open { display: flex; }
+    .navlinks a { padding: 12px 4px; font-size: 1rem; border-bottom: 1px solid var(--border); }
+    .navlinks a:last-child { border-bottom: none; }
+  }
 
   /* ---------- Stats ---------- */
   .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
@@ -289,7 +304,8 @@
 <nav class="topnav">
   <div class="wrap">
     <div class="logo"><span class="dot"></span> Amanat</div>
-    <div class="navlinks">
+    <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">☰</button>
+    <div class="navlinks" id="navLinks">
       <a href="#why">Why it matters</a>
       <a href="#how">How it works</a>
       <a href="#demo">See it in action</a>
@@ -773,6 +789,18 @@ function stopListening() {
 }
 
 // A tap while connecting or listening stops; otherwise it starts.
+// Mobile menu: toggle with ☰, close after picking a link.
+const menuBtn = document.getElementById("menuBtn");
+const navLinks = document.getElementById("navLinks");
+function setMenu(open) {
+  navLinks.classList.toggle("open", open);
+  menuBtn.setAttribute("aria-expanded", String(open));
+  menuBtn.textContent = open ? "✕" : "☰";
+  menuBtn.setAttribute("aria-label", open ? "Close menu" : "Open menu");
+}
+menuBtn.addEventListener("click", () => setMenu(!navLinks.classList.contains("open")));
+navLinks.querySelectorAll("a").forEach((a) => a.addEventListener("click", () => setMenu(false)));
+
 micBtn.addEventListener("click", () => (ws ? stopListening() : startListening()));
 </script>
 

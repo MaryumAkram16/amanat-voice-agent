@@ -34,6 +34,17 @@
   tr.escalate td:first-child { border-left: 3px solid var(--danger); }
   .empty { color: var(--text-soft); padding: 24px; text-align: center; }
   .refresh { color: var(--text-soft); font-size: 0.8rem; margin-top: 16px; }
+  /* The visits table is wide; on small screens it scrolls sideways inside its box
+     instead of pushing the whole page off-screen. */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; }
+  .table-scroll table { min-width: 760px; }
+  @media (max-width: 720px) {
+    body { padding: 20px 16px; }
+    .charts { grid-template-columns: 1fr; }
+    .stat { flex: 1 1 140px; padding: 14px 18px; }
+    th, td { padding: 9px 10px; }
+    #escToast { left: 16px; right: 16px; top: 12px; }
+  }
 
   /* ---------- New-escalation toast ---------- */
   #escToast {
@@ -69,12 +80,14 @@
   </div>
 
   <h2>All visits</h2>
+  <div class="table-scroll">
   <table id="visitTable">
     <thead>
       <tr><th>Time</th><th>Patient</th><th>Type</th><th>Symptoms</th><th>Vitals</th><th>Notes &amp; details</th><th>Status</th></tr>
     </thead>
     <tbody id="visitBody"></tbody>
   </table>
+  </div>
   <div class="refresh">Refreshes every 5 seconds.</div>
 
 <script>
