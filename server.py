@@ -3,7 +3,9 @@ import os
 import queue
 import secrets
 import threading
+import time
 import traceback
+from collections import deque
 
 from assemblyai.streaming.v3 import (
     BeginEvent,
@@ -42,6 +44,25 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+# ---------------------------------------------------------------- abuse guard
+# The WebSocket URL is publicly visible in the frontend's source (there's no way around
+# that for a public demo page). This doesn't add real access control — it's a circuit
+# breaker so a stranger hammering the endpoint can't fully drain the free-tier Gemini
+# quota right before an actual demo. Raise the number via an env var if it's ever too low.
+MAX_PIPELINE_CALLS_PER_HOUR = int(os.environ.get("MAX_PIPELINE_CALLS_PER_HOUR", "150"))
+_pipeline_call_times: "deque" = deque()
+
+
+def _pipeline_quota_ok() -> bool:
+    now = time.time()
+    while _pipeline_call_times and now - _pipeline_call_times[0] > 3600:
+        _pipeline_call_times.popleft()
+    return len(_pipeline_call_times) < MAX_PIPELINE_CALLS_PER_HOUR
+
+
+def _record_pipeline_call():
+    _pipeline_call_times.append(time.time())
 
 # ---------------------------------------------------------------- admin auth
 security = HTTPBasic()
@@ -123,6 +144,11 @@ async def ws_endpoint(websocket: WebSocket):
             return
         print(f"[HEARD] {text}")
         send_json_threadsafe({"type": "final", "text": text})
+        if not _pipeline_quota_ok():
+            print("[session] hourly quota guard triggered — skipping pipeline call")
+            send_json_threadsafe({"type": "quota_exceeded"})
+            return
+        _record_pipeline_call()
         try:
             session.process_sync(text)  # blocking: fine, this thread's only job is this session
         except Exception:

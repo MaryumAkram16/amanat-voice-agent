@@ -671,6 +671,8 @@ async function startListening() {
         }
       } else if (msg.type === "skip") {
         addBubble("(off-topic — nothing recorded)", { tag: "Amanat" });
+      } else if (msg.type === "quota_exceeded") {
+        addBubble("Amanat is at capacity right now — please try again in a few minutes.", { tag: "Amanat" });
       }
       return;
     }
