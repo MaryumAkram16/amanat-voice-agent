@@ -2,12 +2,16 @@
 
 *Built for the AssemblyAI Voice Agent Hackathon (lablab.ai)*
 
+**🔴 Live demo:** [maryumakram16.github.io/amanat-voice-agent](https://maryumakram16.github.io/amanat-voice-agent/)
+
 Amanat lets a Lady Health Worker (LHW) record a home-visit report by speaking
-naturally — in Urdu, Punjabi, English, or any mix of the three — instead of
-writing it down. It listens in real time, pulls out the patient's name and
-health details, checks for danger signs, and replies with a short spoken
-confirmation in Urdu, asking a follow-up question when something important is
-missing rather than guessing.
+instead of writing it down.
+
+- **Speaks naturally** — Urdu, Punjabi, English, or any mix of the three, in the same sentence
+- **Listens in real time** and pulls out the patient's name and health details
+- **Checks every visit for danger signs**
+- **Replies out loud**, in Urdu, with a short spoken confirmation
+- **Never guesses** — asks a follow-up question when something important is missing, instead of filing an incomplete or wrong record
 
 ---
 
@@ -101,30 +105,25 @@ Admin dashboard — live table, charts, and an instant escalation alert
 
 ### Why these specific technical choices
 
-- **AssemblyAI's Whisper-rt streaming model, not the flagship real-time
-  model.** AssemblyAI's fastest real-time model natively handles 18
-  languages — Urdu and Punjabi aren't among them. Whisper-rt covers 99+
-  languages, including both, which is the only reason this project can
-  work in the languages its actual users speak.
-- **Router, extraction, and triage combined into one Gemini call**, not
-  three separate ones. This was a deliberate trade-off to fit inside a free
-  API tier's rate limits, at the cost of not being able to show four
-  genuinely distinct "thinking" stages in the UI — the pipeline status
-  indicator shows three honest stages (Listening → Understanding →
-  Replying) rather than fabricating a fourth step that doesn't correspond
-  to anything actually happening.
-- **Verification never guesses.** The extraction prompt explicitly returns
-  `null` for anything unclear rather than inferring a plausible-sounding
-  value — the follow-up-question flow exists specifically to keep a wrong
-  guess out of a health record.
-- **Structured conversation state, not just concatenated text.** Early
-  versions of the continuation logic reconstructed context by pasting raw
-  transcript fragments together and re-extracting everything from scratch —
-  which could silently drop a detail (a name, a symptom) that had already
-  been caught correctly earlier in the conversation, especially on quieter
-  audio. The current version carries the actual structured extraction
-  forward between turns and backfills any gap in a fresh extraction using
-  what's already confirmed, without ever overwriting a new, correct value.
+- **AssemblyAI's Whisper-rt streaming model, not the flagship real-time model**
+  - The flagship real-time model natively handles only 18 languages — Urdu and Punjabi aren't among them
+  - Whisper-rt covers 99+ languages, including both
+  - Without this choice, the project simply couldn't work in the languages its actual users speak
+
+- **Router, extraction, and triage combined into one Gemini call, not three separate ones**
+  - Deliberate trade-off to fit inside a free API tier's rate limits
+  - Cost: can't show four genuinely distinct "thinking" stages in the UI
+  - The pipeline status indicator shows three honest stages (Listening → Understanding → Replying) rather than fabricating a fourth step that doesn't correspond to anything actually happening
+
+- **Verification never guesses**
+  - The extraction prompt explicitly returns `null` for anything unclear, rather than inferring a plausible-sounding value
+  - The follow-up-question flow exists specifically to keep a wrong guess out of a health record
+
+- **Structured conversation state, not just concatenated text**
+  - Early versions reconstructed context by pasting raw transcript fragments together and re-extracting everything from scratch
+  - That could silently drop a detail (a name, a symptom) already caught correctly earlier in the conversation, especially on quieter audio
+  - The current version carries the actual structured extraction forward between turns
+  - A backfill step fills any gap in a fresh extraction using what's already confirmed — it never overwrites a new, correct value
 
 ---
 
