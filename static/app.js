@@ -1,4 +1,4 @@
-// Change this to your deployed Railway backend's WebSocket URL before publishing to GitHub Pages.
+// Real backend URL — update if you ever redeploy Railway to a new domain.
 const BACKEND_WS_URL = "wss://web-production-11fd82.up.railway.app/ws";
 
 const ECHO_TAIL_MS = 600; // matches ECHO_TAIL_SECONDS in the original tts.py
@@ -11,6 +11,41 @@ const logEl = document.getElementById("log");
 let ws, audioCtx, workletNode, mediaStream;
 let muted = false; // true while Amanat's reply is playing, so we don't stream her own voice back
 
+// One reused <audio> element, unlocked during the Start click (a real user gesture) so
+// iOS Safari allows later programmatic play() calls triggered from WebSocket messages.
+// A queue stops two replies from ever overlapping.
+const player = new Audio();
+let audioQueue = [];
+let isPlayingAudio = false;
+
+function unlockAudioForSession() {
+  player.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  player.play().catch(() => {});
+}
+
+function enqueueReply(blob) {
+  audioQueue.push(blob);
+  playNextQueued();
+}
+
+function playNextQueued() {
+  if (isPlayingAudio || audioQueue.length === 0) return;
+  isPlayingAudio = true;
+  muted = true;
+  const blob = audioQueue.shift();
+  const url = URL.createObjectURL(blob);
+  player.src = url;
+  player.onended = () => {
+    URL.revokeObjectURL(url);
+    isPlayingAudio = false;
+    setTimeout(() => {
+      muted = false;
+      playNextQueued();
+    }, ECHO_TAIL_MS);
+  };
+  player.play().catch((err) => console.error("[amanat] playback blocked:", err));
+}
+
 function log(text) {
   const div = document.createElement("div");
   div.textContent = text;
@@ -18,6 +53,7 @@ function log(text) {
 }
 
 async function start() {
+  unlockAudioForSession(); // must run synchronously here, before any await
   statusEl.textContent = "Connecting...";
   ws = new WebSocket(BACKEND_WS_URL);
   ws.binaryType = "arraybuffer";
@@ -57,15 +93,8 @@ async function start() {
       return;
     }
     // Binary message = Amanat's spoken reply (mp3 bytes)
-    muted = true; // stop streaming mic audio while she's talking, so she doesn't hear herself
     const blob = new Blob([event.data], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.addEventListener("ended", () => {
-      setTimeout(() => { muted = false; }, ECHO_TAIL_MS);
-      URL.revokeObjectURL(url);
-    });
-    audio.play();
+    enqueueReply(blob);
   };
 
   ws.onclose = () => {

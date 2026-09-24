@@ -444,6 +444,49 @@ const consoleEl = document.getElementById("console");
 
 let ws, audioCtx, workletNode, mediaStream, listening = false, muted = false;
 
+// A single reused <audio> element, unlocked during the "Start Listening" click (a real
+// user gesture). iOS Safari blocks audio.play() unless it happens inside a gesture OR on
+// an element that was already successfully played during one — this element stays
+// unlocked for the rest of the session, so later replies (triggered from WebSocket
+// messages, not gestures) can still play. Reusing one element (instead of `new Audio()`
+// per reply) plus a queue also stops two replies from ever overlapping.
+const player = new Audio();
+let audioQueue = [];
+let isPlayingAudio = false;
+
+function unlockAudioForSession() {
+  // A tiny silent WAV, just to satisfy the "this element has played" requirement.
+  player.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
+  player.play().catch(() => {});
+}
+
+function enqueueReply(blob) {
+  audioQueue.push(blob);
+  playNextQueued();
+}
+
+function playNextQueued() {
+  if (isPlayingAudio || audioQueue.length === 0) return;
+  isPlayingAudio = true;
+  muted = true;
+  micBtn.classList.add("speaking");
+  setStatus("Amanat is replying...", "live");
+  const blob = audioQueue.shift();
+  const url = URL.createObjectURL(blob);
+  player.src = url;
+  player.onended = () => {
+    URL.revokeObjectURL(url);
+    isPlayingAudio = false;
+    setTimeout(() => {
+      muted = false;
+      micBtn.classList.remove("speaking");
+      setStatus("Listening — speak naturally", "live");
+      playNextQueued(); // in case another reply arrived while this one was playing
+    }, ECHO_TAIL_MS);
+  };
+  player.play().catch((err) => console.error("[amanat] playback blocked:", err));
+}
+
 const WORKLET_SRC = `
 class RecorderProcessor extends AudioWorkletProcessor {
   constructor(options) {
@@ -503,6 +546,7 @@ function setStatus(text, cls) {
 
 async function startListening() {
   if (listening) return;
+  unlockAudioForSession(); // must run synchronously here, before any await, to count as part of the click gesture
   setStatus("Connecting...", "");
   ws = new WebSocket(BACKEND_WS_URL);
   ws.binaryType = "arraybuffer";
@@ -546,21 +590,8 @@ async function startListening() {
       }
       return;
     }
-    muted = true;
-    micBtn.classList.add("speaking");
-    setStatus("Amanat is replying...", "live");
     const blob = new Blob([event.data], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    audio.addEventListener("ended", () => {
-      setTimeout(() => {
-        muted = false;
-        micBtn.classList.remove("speaking");
-        setStatus("Listening — speak naturally", "live");
-      }, ECHO_TAIL_MS);
-      URL.revokeObjectURL(url);
-    });
-    audio.play();
+    enqueueReply(blob);
   };
 
   ws.onclose = () => stopListening();
