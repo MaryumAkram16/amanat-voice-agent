@@ -83,8 +83,14 @@ async function start() {
   ws.onmessage = (event) => {
     if (typeof event.data === "string") {
       const msg = JSON.parse(event.data);
-      if (msg.type === "record") {
-        const escalated = msg.triage.escalate ? " — ESCALATED" : "";
+      if (msg.type === "status") {
+        log(`[pipeline] ${msg.step}`);
+      } else if (msg.type === "partial") {
+        log(`(hearing) ${msg.text}`);
+      } else if (msg.type === "final") {
+        log(`(heard) ${msg.text}`);
+      } else if (msg.type === "record") {
+        const escalated = msg.triage.escalate ? " — ESCALATED (supervisor notified, simulated)" : "";
         log(`Recorded: ${msg.extracted.patient_name || "(no name given)"}${escalated}`);
         log(JSON.stringify(msg, null, 2));
       } else if (msg.type === "skip") {

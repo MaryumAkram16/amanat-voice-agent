@@ -64,6 +64,11 @@ def api_visits(_auth: bool = Depends(require_admin)):
     return {"stats": db.get_stats(), "visits": db.get_visits()}
 
 
+@app.get("/api/analytics")
+def api_analytics(_auth: bool = Depends(require_admin)):
+    return db.get_analytics()
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page(_auth: bool = Depends(require_admin)):
     # Deliberately NOT in static/ — anything there is served unauthenticated at its own path.
@@ -75,6 +80,13 @@ async def ws_endpoint(websocket: WebSocket):
     await websocket.accept()
     loop = asyncio.get_event_loop()
     session = Session(loop, websocket)
+
+    def send_json_threadsafe(payload: dict):
+        """For messages that don't belong to Session (partial transcripts, connection-level
+        status) but still need to reach the browser from this background STT thread."""
+        asyncio.run_coroutine_threadsafe(websocket.send_json(payload), loop).result()
+
+    session.on_status = lambda step: send_json_threadsafe({"type": "status", "step": step})
 
     audio_queue: "queue.Queue" = queue.Queue()
     handled_turns = set()
@@ -92,14 +104,17 @@ async def ws_endpoint(websocket: WebSocket):
         print(f"[session] started: {event.id}")
 
     def on_turn(client, event: TurnEvent):
+        text = (event.transcript or "").strip()
         if not event.end_of_turn:
+            # Live partial transcript, shown on screen as she's still speaking.
+            if text:
+                send_json_threadsafe({"type": "partial", "text": text})
             return
         order = getattr(event, "turn_order", None)
         if order is not None:
             if order in handled_turns:
                 return
             handled_turns.add(order)
-        text = (event.transcript or "").strip()
         if not text:
             return
         low = text.lower()
@@ -107,6 +122,7 @@ async def ws_endpoint(websocket: WebSocket):
             print(f"[HEARD] {text}  (looks like a hallucinated filler phrase - ignored)")
             return
         print(f"[HEARD] {text}")
+        send_json_threadsafe({"type": "final", "text": text})
         try:
             session.process_sync(text)  # blocking: fine, this thread's only job is this session
         except Exception:

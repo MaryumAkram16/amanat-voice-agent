@@ -61,6 +61,11 @@ class Session:
         self._pending = None
         self._recent = None
         self._clarify = None
+        self.on_status = None  # set by server.py; called with "understanding" / "replying" / "listening"
+
+    def _status(self, step: str):
+        if self.on_status:
+            self.on_status(step)
 
     # ---- output helpers: schedule the actual send onto the asyncio loop and wait for it ----
     def _send_json(self, payload: dict):
@@ -73,6 +78,7 @@ class Session:
         (based on actual playback duration there), so no timing coordination happens here."""
         if not text:
             return
+        self._status("replying")
         audio_bytes = synthesize(text)
         asyncio.run_coroutine_threadsafe(self.websocket.send_bytes(audio_bytes), self.loop).result()
 
@@ -112,6 +118,13 @@ indicate either way)."""
         transcript = (transcript or "").strip()
         if not transcript:
             return
+        self._status("understanding")
+        try:
+            self._process_sync_inner(transcript)
+        finally:
+            self._status("listening")
+
+    def _process_sync_inner(self, transcript: str):
 
         count, already_escalated = 0, False
         prior_extracted = None  # known-good extraction from earlier in this conversation, if any

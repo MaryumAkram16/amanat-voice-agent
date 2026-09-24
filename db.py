@@ -76,4 +76,42 @@ def get_stats():
     return {"total": total, "escalated": escalated}
 
 
+def get_analytics():
+    """Aggregates for the admin dashboard's charts. Symptoms are stored as a JSON list
+    per row, so counting how often each one occurs is done in Python rather than SQL."""
+    conn = _connect()
+    rows = conn.execute("SELECT recorded_at, symptoms, escalate FROM visits").fetchall()
+    conn.close()
+
+    per_day = {}
+    symptom_counts = {}
+    escalated = 0
+    for row in rows:
+        day = time.strftime("%Y-%m-%d", time.localtime(row["recorded_at"]))
+        per_day[day] = per_day.get(day, 0) + 1
+        if row["escalate"]:
+            escalated += 1
+        try:
+            symptoms = json.loads(row["symptoms"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            symptoms = []
+        for s in symptoms:
+            key = s.strip().lower()
+            if key:
+                symptom_counts[key] = symptom_counts.get(key, 0) + 1
+
+    visits_per_day = [{"day": d, "count": c} for d, c in sorted(per_day.items())]
+    top_symptoms = sorted(symptom_counts.items(), key=lambda kv: kv[1], reverse=True)[:8]
+    total = len(rows)
+    escalation_rate = round((escalated / total) * 100, 1) if total else 0.0
+
+    return {
+        "visits_per_day": visits_per_day,
+        "top_symptoms": [{"symptom": s, "count": c} for s, c in top_symptoms],
+        "escalation_rate": escalation_rate,
+        "total": total,
+        "escalated": escalated,
+    }
+
+
 init_db()

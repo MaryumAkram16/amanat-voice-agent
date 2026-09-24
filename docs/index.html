@@ -121,6 +121,34 @@
   .mic-status.err { color: var(--danger); }
   .mic-hint { font-size: 0.85rem; color: var(--text-soft); opacity: 0.7; }
 
+  /* ---------- Pipeline stepper ---------- */
+  .pipeline-stepper { display: flex; gap: 8px; margin-top: 20px; justify-content: center; }
+  .pipeline-stepper .step {
+    font-size: 0.76rem; padding: 5px 13px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--text-soft);
+    transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  }
+  .pipeline-stepper .step.active {
+    background: var(--grad); color: #0B0E14; font-weight: 600; border-color: transparent;
+  }
+
+  /* ---------- Live transcript ---------- */
+  .live-transcript {
+    margin-top: 14px; min-height: 1.5em; max-width: 540px; margin-left: auto; margin-right: auto;
+    font-size: 0.98rem; color: var(--text-soft); font-style: italic; padding: 0 16px;
+  }
+  .live-transcript.final { color: var(--text); font-style: normal; font-weight: 500; }
+
+  /* ---------- Escalation banner ---------- */
+  .escalation-banner {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 50;
+    background: var(--danger); color: #fff; text-align: center;
+    padding: 14px 16px; font-family: "Space Grotesk", sans-serif; font-weight: 600; font-size: 0.92rem;
+    transform: translateY(-100%); transition: transform 0.3s ease;
+  }
+  .escalation-banner.show { transform: translateY(0); animation: flash-bg 0.9s ease-in-out 3; }
+  @keyframes flash-bg { 0%, 100% { background: var(--danger); } 50% { background: #ff8a97; } }
+
   /* ---------- Live console ---------- */
   .console { max-width: 640px; margin: 44px auto 0; text-align: left; display: none; }
   .console.show { display: block; }
@@ -237,6 +265,8 @@
 </head>
 <body>
 
+<div class="escalation-banner" id="escalationBanner">🚨 Danger sign detected — case escalated. Supervisor notified (simulated).</div>
+
 <nav class="topnav">
   <div class="wrap">
     <div class="logo"><span class="dot"></span> Amanat</div>
@@ -272,6 +302,12 @@
       <div class="bars"><span></span><span></span><span></span><span></span><span></span></div>
       <div class="mic-status" id="micStatus">Tap to speak</div>
       <div class="mic-hint">Uses your microphone — nothing is recorded until you tap.</div>
+      <div class="pipeline-stepper" id="pipelineStepper">
+        <div class="step" data-step="listening">Listening</div>
+        <div class="step" data-step="understanding">Understanding</div>
+        <div class="step" data-step="replying">Replying</div>
+      </div>
+      <div class="live-transcript" id="liveTranscript"></div>
     </div>
 
     <div class="console" id="console"></div>
@@ -441,6 +477,8 @@ const micStage = document.getElementById("micStage");
 const micBtn = document.getElementById("micBtn");
 const micStatus = document.getElementById("micStatus");
 const consoleEl = document.getElementById("console");
+const liveTranscript = document.getElementById("liveTranscript");
+const escalationBanner = document.getElementById("escalationBanner");
 
 let ws, audioCtx, workletNode, mediaStream, listening = false, muted = false;
 
@@ -539,6 +577,39 @@ function addBubble(text, opts = {}) {
   row.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
+function updatePipelineStep(step) {
+  document.querySelectorAll(".pipeline-stepper .step").forEach((el) => {
+    el.classList.toggle("active", el.dataset.step === step);
+  });
+}
+
+function updateLiveTranscript(text, isFinal) {
+  liveTranscript.textContent = text;
+  liveTranscript.classList.toggle("final", isFinal);
+}
+
+function playEscalationTone() {
+  // A simple two-tone alert beep, generated on the fly — no audio asset needed.
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [880, 660].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      osc.type = "sine";
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.22);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.22);
+      osc.stop(ctx.currentTime + i * 0.22 + 0.2);
+    });
+  } catch (e) { /* ignore — non-critical */ }
+}
+
+function showEscalationBanner() {
+  escalationBanner.classList.add("show");
+  setTimeout(() => escalationBanner.classList.remove("show"), 5000);
+}
+
 function setStatus(text, cls) {
   micStatus.textContent = text;
   micStatus.className = "mic-status" + (cls ? " " + cls : "");
@@ -574,17 +645,30 @@ async function startListening() {
     listening = true;
     micStage.classList.add("listening");
     setStatus("Listening — speak naturally", "live");
+    updatePipelineStep("listening");
   };
 
   ws.onmessage = (event) => {
     if (typeof event.data === "string") {
       const msg = JSON.parse(event.data);
-      if (msg.type === "record") {
+      if (msg.type === "status") {
+        updatePipelineStep(msg.step);
+      } else if (msg.type === "partial") {
+        updateLiveTranscript(msg.text, false);
+      } else if (msg.type === "final") {
+        updateLiveTranscript(msg.text, true);
+      } else if (msg.type === "record") {
         const name = msg.extracted.patient_name || "(no name given)";
-        addBubble(
-          `${name}${msg.triage.escalate ? " — ESCALATED: " + msg.triage.reason : " — recorded"}`,
-          { tag: "Visit recorded", escalate: msg.triage.escalate, record: !msg.triage.escalate }
-        );
+        if (msg.triage.escalate) {
+          playEscalationTone();
+          showEscalationBanner();
+          addBubble(
+            `${name} — ESCALATED: ${msg.triage.reason} · Supervisor notified (simulated)`,
+            { tag: "🚨 Escalated", escalate: true }
+          );
+        } else {
+          addBubble(`${name} — recorded`, { tag: "Visit recorded", record: true });
+        }
       } else if (msg.type === "skip") {
         addBubble("(off-topic — nothing recorded)", { tag: "Amanat" });
       }
@@ -607,6 +691,8 @@ function stopListening() {
   micStage.classList.remove("listening");
   micBtn.classList.remove("speaking");
   setStatus("Tap to speak", "");
+  updatePipelineStep(null);
+  updateLiveTranscript("", false);
 }
 
 micBtn.addEventListener("click", () => (listening ? stopListening() : startListening()));
