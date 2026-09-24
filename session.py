@@ -11,6 +11,7 @@ from agents import (
     verification_agent,
 )
 from web_tts import synthesize
+import care
 import db
 
 MAX_FOLLOWUPS = 2          # how many times Amanat asks a question about the same visit
@@ -22,6 +23,11 @@ CONTINUATION_WINDOW = 45    # seconds; a visit just recorded can still receive o
                             # once the pipeline's per-step latency is fixed — this is a safety
                             # margin, not the real solution to a slow round trip.)
 CLARIFY_TIMEOUT = 60        # seconds to wait for an answer to "same patient, or a new one?"
+
+
+class ClientGone(Exception):
+    """The browser disconnected mid-pipeline. Raised so the pipeline stops right away
+    instead of spending more Gemini/TTS calls on a reply nobody will hear."""
 
 
 def _merge_extracted(new: dict, prior: dict) -> dict:
@@ -46,6 +52,11 @@ def _merge_extracted(new: dict, prior: dict) -> dict:
         if not new_vitals.get(key) and prior_vitals.get(key):
             new_vitals[key] = prior_vitals[key]
     merged["vitals"] = new_vitals
+    if merged.get("visit_type", "general") == "general" and prior.get("visit_type"):
+        merged["visit_type"] = prior["visit_type"]
+    details = dict(prior.get("details") or {})
+    details.update(merged.get("details") or {})
+    merged["details"] = details
     return merged
 
 
@@ -61,30 +72,76 @@ class Session:
         self._pending = None
         self._recent = None
         self._clarify = None
-        self.on_status = None  # set by server.py; called with "understanding" / "replying" / "listening"
+        self.closed = False    # set by server.py when the browser disconnects
 
     def _status(self, step: str):
-        if self.on_status:
-            self.on_status(step)
+        """Tell the browser which pipeline step is running: understanding / replying / listening."""
+        if not self.closed:
+            self._send(self.websocket.send_json({"type": "status", "step": step}))
 
     # ---- output helpers: schedule the actual send onto the asyncio loop and wait for it ----
+    def _send(self, coro):
+        """Run one websocket send from this background thread. Any failure means the browser
+        is gone, so it's turned into ClientGone to end the pipeline quietly."""
+        if self.closed:
+            coro.close()
+            raise ClientGone()
+        try:
+            asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+        except Exception:
+            self.closed = True
+            raise ClientGone()
+
     def _send_json(self, payload: dict):
-        asyncio.run_coroutine_threadsafe(
-            self.websocket.send_text(json.dumps(payload, ensure_ascii=False)), self.loop
-        ).result()
+        self._send(self.websocket.send_text(json.dumps(payload, ensure_ascii=False)))
 
     def _speak(self, text: str):
         """Synthesize and send audio bytes. The BROWSER decides when to unmute the mic again
         (based on actual playback duration there), so no timing coordination happens here."""
         if not text:
             return
+        if self.closed:
+            raise ClientGone()
         self._status("replying")
         audio_bytes = synthesize(text)
-        asyncio.run_coroutine_threadsafe(self.websocket.send_bytes(audio_bytes), self.loop).result()
+        self._send(self.websocket.send_bytes(audio_bytes))
 
-    def _emit(self, extracted, triage):
-        db.save_visit(extracted, triage)
-        self._send_json({"type": "record", "extracted": extracted, "triage": triage})
+    def _reply(self, result, extracted, triage):
+        """Use the reply combined_agent already wrote (saves a whole Gemini round trip).
+        Falls back to a fresh reply_agent call if there wasn't one, or if merging with an
+        earlier sentence changed the patient's name since it was written. For a child's
+        visit, the vaccine reminder is added after it."""
+        if result.get("reply") and extracted.get("patient_name") == result["extracted"].get("patient_name"):
+            reply = result["reply"]
+        else:
+            reply = reply_agent(extracted, triage)
+        vaccines, _ = self._vaccines(extracted)
+        return f"{reply} {vaccines}".strip()
+
+    @staticmethod
+    def _vaccines(extracted):
+        """(Urdu sentence, English note) about vaccines due for a child's visit, else ("", "")."""
+        if extracted.get("visit_type") != "child":
+            return "", ""
+        return care.vaccine_reminder((extracted.get("details") or {}).get("child_age_weeks"))
+
+    def _emit(self, result, extracted, triage, visit_id):
+        """Save the visit (updating it if this conversation already saved it) and show it
+        in the browser. Returns the visit id."""
+        visit_id, patient_id = db.save_visit(
+            extracted, triage, patient_id=result.get("patient_id"), visit_id=visit_id
+        )
+        history = result.get("history") or []
+        self._send_json({
+            "type": "record",
+            "extracted": extracted,
+            "triage": triage,
+            "visit_type": extracted.get("visit_type", "general"),
+            "visit_number": len(history) + 1 if patient_id else None,
+            "last_seen": care.days_ago(history[0]["recorded_at"]) if history else None,
+            "vaccine_note": self._vaccines(extracted)[1],
+        })
+        return visit_id
 
     # ---- same-patient disambiguation (identical to orchestrator.py) ----
     def _same_patient(self, known_name, candidate_name):
@@ -122,12 +179,14 @@ indicate either way)."""
         try:
             self._process_sync_inner(transcript)
         finally:
-            self._status("listening")
+            if not self.closed:
+                self._status("listening")
 
     def _process_sync_inner(self, transcript: str):
 
         count, already_escalated = 0, False
         prior_extracted = None  # known-good extraction from earlier in this conversation, if any
+        visit_id = None         # this visit's saved row, once there is one (updated, never duplicated)
 
         clarify, self._clarify = self._clarify, None
         if clarify and time.time() - clarify["time"] <= CLARIFY_TIMEOUT:
@@ -135,11 +194,13 @@ indicate either way)."""
             if same is True:
                 text = f"{clarify['recent_text']} {clarify['held']} {transcript}"
                 prior_extracted = clarify.get("recent_extracted")
+                visit_id = clarify.get("recent_visit_id")
             elif same is False:
                 text = f"{clarify['held']} {transcript}"
             else:
                 text = f"{clarify['recent_text']} {clarify['held']} {transcript}"
                 prior_extracted = clarify.get("recent_extracted")
+                visit_id = clarify.get("recent_visit_id")
 
         else:
             pending, self._pending = self._pending, None
@@ -150,6 +211,7 @@ indicate either way)."""
                 text = f"{pending['text']} {transcript}"
                 count, already_escalated = pending["count"], pending["escalated"]
                 prior_extracted = pending.get("extracted")
+                visit_id = pending.get("visit_id")
 
             else:
                 recent = self._recent
@@ -158,7 +220,7 @@ indicate either way)."""
                     self._recent = None
 
                 if recent:
-                    solo = run_agents(transcript)
+                    solo = run_agents(transcript, current_visit_id=recent.get("visit_id"))
                     if solo["outcome"] == "skip":
                         self._send_json({"type": "skip"})
                         return
@@ -167,6 +229,7 @@ indicate either way)."""
                         if self._same_patient(recent["name"], candidate_name):
                             text = f"{recent['text']} {transcript}"
                             prior_extracted = recent.get("extracted")
+                            visit_id = recent.get("visit_id")
                         else:
                             self._recent = None
                             text = transcript
@@ -176,6 +239,7 @@ indicate either way)."""
                             "recent_text": recent["text"],
                             "recent_name": recent["name"],
                             "recent_extracted": recent.get("extracted"),
+                            "recent_visit_id": recent.get("visit_id"),
                             "held": transcript,
                             "time": time.time(),
                         }
@@ -183,7 +247,7 @@ indicate either way)."""
                 else:
                     text = transcript
 
-        result = run_agents(text)
+        result = run_agents(text, current_visit_id=visit_id)
         outcome = result["outcome"]
 
         if outcome == "skip":
@@ -197,13 +261,13 @@ indicate either way)."""
         name = extracted.get("patient_name")
 
         if outcome == "record":
-            self._emit(extracted, triage)
-            self._speak(reply_agent(extracted, triage))
-            self._recent = {"text": text, "name": name, "extracted": extracted, "time": time.time()}
+            visit_id = self._emit(result, extracted, triage, visit_id)
+            self._speak(self._reply(result, extracted, triage))
+            self._recent = {"text": text, "name": name, "extracted": extracted, "visit_id": visit_id, "time": time.time()}
             return
 
         if outcome == "escalate":
-            self._emit(extracted, triage)
+            visit_id = self._emit(result, extracted, triage, visit_id)
             missing = result["verification"]["missing"]
             if already_escalated:
                 if not missing:
@@ -212,26 +276,29 @@ indicate either way)."""
                         "Confirm briefly, in Urdu script, that the patient's details have been "
                         "added to the urgent case.",
                     ))
-                    self._recent = {"text": text, "name": name, "extracted": extracted, "time": time.time()}
+                    self._recent = {"text": text, "name": name, "extracted": extracted, "visit_id": visit_id, "time": time.time()}
                     return
             else:
-                self._speak(reply_agent(extracted, triage))  # danger first, questions after
+                self._speak(self._reply(result, extracted, triage))  # danger first, questions after
                 if not missing:
-                    self._recent = {"text": text, "name": name, "extracted": extracted, "time": time.time()}
+                    self._recent = {"text": text, "name": name, "extracted": extracted, "visit_id": visit_id, "time": time.time()}
                     return
-            if count < MAX_FOLLOWUPS:
-                question = verification_agent(extracted)["follow_up_question"]
+            # Re-check against the merged extraction: an earlier sentence may have filled the gap.
+            question = verification_agent(
+                extracted, result["verification"].get("follow_up_question", "")
+            ).get("follow_up_question")
+            if question and count < MAX_FOLLOWUPS:
                 self._speak(question)
-                self._pending = {"text": text, "count": count + 1, "escalated": True, "extracted": extracted, "time": time.time()}
+                self._pending = {"text": text, "count": count + 1, "escalated": True, "extracted": extracted, "visit_id": visit_id, "time": time.time()}
             else:
-                self._recent = {"text": text, "name": name, "extracted": extracted, "time": time.time()}
+                self._recent = {"text": text, "name": name, "extracted": extracted, "visit_id": visit_id, "time": time.time()}
             return
 
         if outcome == "ask":
             if count < MAX_FOLLOWUPS:
                 self._speak(result["verification"]["follow_up_question"])
-                self._pending = {"text": text, "count": count + 1, "escalated": False, "extracted": extracted, "time": time.time()}
+                self._pending = {"text": text, "count": count + 1, "escalated": False, "extracted": extracted, "visit_id": visit_id, "time": time.time()}
             else:
-                self._emit(extracted, triage)
-                self._speak(reply_agent(extracted, triage))
-                self._recent = {"text": text, "name": name, "extracted": extracted, "time": time.time()}
+                visit_id = self._emit(result, extracted, triage, visit_id)
+                self._speak(self._reply(result, extracted, triage))
+                self._recent = {"text": text, "name": name, "extracted": extracted, "visit_id": visit_id, "time": time.time()}

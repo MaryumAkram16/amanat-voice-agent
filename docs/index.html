@@ -589,11 +589,31 @@ function addBubble(text, opts = {}) {
     box.appendChild(tag);
   }
   const body = document.createElement("div");
+  body.style.whiteSpace = "pre-line";
   body.textContent = text;
   box.appendChild(body);
   row.appendChild(box);
   consoleEl.appendChild(row);
   row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+const VISIT_TYPE_LABELS = {
+  pregnancy: "Pregnancy", postnatal: "After delivery", child: "Child", family_planning: "Family planning",
+};
+
+function visitTypeTag(msg) {
+  const label = VISIT_TYPE_LABELS[msg.visit_type];
+  return label ? " · " + label : "";
+}
+
+// Extra lines under a recorded visit: repeat-visit info and vaccine reminders.
+function recordExtras(msg) {
+  const parts = [];
+  if (msg.visit_number && msg.visit_number > 1) {
+    parts.push(`Visit #${msg.visit_number}` + (msg.last_seen ? ` · last seen ${msg.last_seen}` : ""));
+  }
+  if (msg.vaccine_note) parts.push("💉 " + msg.vaccine_note);
+  return parts.length ? "\n" + parts.join("\n") : "";
 }
 
 function updatePipelineStep(step) {
@@ -703,15 +723,16 @@ async function startListening() {
         updateLiveTranscript(msg.text, true);
       } else if (msg.type === "record") {
         const name = msg.extracted.patient_name || "(no name given)";
+        const extras = recordExtras(msg);
         if (msg.triage.escalate) {
           playEscalationTone();
           showEscalationBanner();
           addBubble(
-            `${name} — ESCALATED: ${msg.triage.reason} · Supervisor notified (simulated)`,
-            { tag: "🚨 Escalated", escalate: true }
+            `${name} — ESCALATED: ${msg.triage.reason} · Supervisor notified (simulated)${extras}`,
+            { tag: "🚨 Escalated" + visitTypeTag(msg), escalate: true }
           );
         } else {
-          addBubble(`${name} — recorded`, { tag: "Visit recorded", record: true });
+          addBubble(`${name} — recorded${extras}`, { tag: "Visit recorded" + visitTypeTag(msg), record: true });
         }
       } else if (msg.type === "skip") {
         addBubble("(off-topic — nothing recorded)", { tag: "Amanat" });

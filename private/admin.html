@@ -71,7 +71,7 @@
   <h2>All visits</h2>
   <table id="visitTable">
     <thead>
-      <tr><th>Time</th><th>Patient</th><th>Symptoms</th><th>Vitals</th><th>Notes</th><th>Status</th></tr>
+      <tr><th>Time</th><th>Patient</th><th>Type</th><th>Symptoms</th><th>Vitals</th><th>Notes &amp; details</th><th>Status</th></tr>
     </thead>
     <tbody id="visitBody"></tbody>
   </table>
@@ -142,6 +142,10 @@ async function loadAnalytics() {
   }
 }
 
+function esc(text) {
+  return String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 async function load() {
   const res = await fetch("/api/visits");
   if (!res.ok) return;
@@ -157,7 +161,7 @@ async function load() {
   const body = document.getElementById("visitBody");
   body.innerHTML = "";
   if (data.visits.length === 0) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">No visits recorded yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="empty">No visits recorded yet.</td></tr>';
     return;
   }
   for (const v of data.visits) {
@@ -166,13 +170,18 @@ async function load() {
     const symptoms = JSON.parse(v.symptoms || "[]").join(", ") || "—";
     const vitals = [v.vitals_temp, v.vitals_bp].filter(Boolean).join(" / ") || "—";
     const time = new Date(v.recorded_at * 1000).toLocaleString();
+    const details = Object.entries(JSON.parse(v.details || "{}"))
+      .map(([k, val]) => `${k.replace(/_/g, " ")}: ${Array.isArray(val) ? val.join(", ") : val}`);
+    const notes = [v.notes, ...details].filter(Boolean).join("; ") || "—";
+    // Everything here came from speech, so escape it before it goes into innerHTML.
     tr.innerHTML = `
-      <td>${time}</td>
-      <td>${v.patient_name || "(no name)"}</td>
-      <td>${symptoms}</td>
-      <td>${vitals}</td>
-      <td>${v.notes || "—"}</td>
-      <td>${v.escalate ? "Escalated: " + (v.reason || "") : "Recorded"}</td>
+      <td>${esc(time)}</td>
+      <td>${esc(v.patient_name || "(no name)")}</td>
+      <td>${esc((v.visit_type || "general").replace(/_/g, " "))}</td>
+      <td>${esc(symptoms)}</td>
+      <td>${esc(vitals)}</td>
+      <td>${esc(notes)}</td>
+      <td>${esc(v.escalate ? "Escalated: " + (v.reason || "") : "Recorded")}</td>
     `;
     body.appendChild(tr);
   }

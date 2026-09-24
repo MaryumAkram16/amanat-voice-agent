@@ -25,7 +25,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 
 import db
-from session import Session
+from session import ClientGone, Session
 
 load_dotenv()
 
@@ -104,10 +104,9 @@ async def ws_endpoint(websocket: WebSocket):
 
     def send_json_threadsafe(payload: dict):
         """For messages that don't belong to Session (partial transcripts, connection-level
-        status) but still need to reach the browser from this background STT thread."""
-        asyncio.run_coroutine_threadsafe(websocket.send_json(payload), loop).result()
-
-    session.on_status = lambda step: send_json_threadsafe({"type": "status", "step": step})
+        status) but still need to reach the browser from this background STT thread.
+        Raises ClientGone if the browser has already disconnected."""
+        session._send(websocket.send_json(payload))
 
     audio_queue: "queue.Queue" = queue.Queue()
     handled_turns = set()
@@ -126,10 +125,15 @@ async def ws_endpoint(websocket: WebSocket):
 
     def on_turn(client, event: TurnEvent):
         text = (event.transcript or "").strip()
+        if session.closed:
+            return
         if not event.end_of_turn:
             # Live partial transcript, shown on screen as she's still speaking.
             if text:
-                send_json_threadsafe({"type": "partial", "text": text})
+                try:
+                    send_json_threadsafe({"type": "partial", "text": text})
+                except ClientGone:
+                    pass
             return
         order = getattr(event, "turn_order", None)
         if order is not None:
@@ -143,14 +147,18 @@ async def ws_endpoint(websocket: WebSocket):
             print(f"[HEARD] {text}  (looks like a hallucinated filler phrase - ignored)")
             return
         print(f"[HEARD] {text}")
-        send_json_threadsafe({"type": "final", "text": text})
-        if not _pipeline_quota_ok():
-            print("[session] hourly quota guard triggered — skipping pipeline call")
-            send_json_threadsafe({"type": "quota_exceeded"})
-            return
-        _record_pipeline_call()
+        started = time.time()
         try:
+            send_json_threadsafe({"type": "final", "text": text})
+            if not _pipeline_quota_ok():
+                print("[session] hourly quota guard triggered — skipping pipeline call")
+                send_json_threadsafe({"type": "quota_exceeded"})
+                return
+            _record_pipeline_call()
             session.process_sync(text)  # blocking: fine, this thread's only job is this session
+            print(f"[session] replied in {time.time() - started:.1f}s")
+        except ClientGone:
+            print(f"[session] browser left after {time.time() - started:.1f}s, before the reply was sent")
         except Exception:
             print("[session] pipeline error:")
             traceback.print_exc()
@@ -189,6 +197,7 @@ async def ws_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         print("[session] client disconnected")
     finally:
+        session.closed = True  # stops any in-flight pipeline at its next send
         audio_queue.put(None)  # let the STT thread exit its generator cleanly
 
 
