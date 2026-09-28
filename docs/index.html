@@ -3,23 +3,23 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Amanat — voice AI for community health visits</title>
-<meta name="description" content="Real-time multilingual voice AI for Lady Health Workers — speak a home visit in Urdu, Punjabi, or English and Amanat records it, flags danger signs, and replies in Urdu." />
+<title>Amanat Health — voice AI for community health visits</title>
+<meta name="description" content="Real-time multilingual voice AI for Lady Health Workers — speak a home visit in Urdu, Punjabi, or English and Amanat Health records it, flags danger signs, and replies in Urdu." />
 <meta name="theme-color" content="#0B0E14" />
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23FF9B45'/%3E%3Cstop offset='1' stop-color='%232FD4C4'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ccircle cx='16' cy='16' r='16' fill='url(%23g)'/%3E%3Cpath d='M16 19a3 3 0 0 0 3-3v-5a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-4a5 5 0 0 1-10 0m5 5v3' fill='none' stroke='%230B0E14' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E" />
 <!-- Link previews (WhatsApp, LinkedIn, X, Slack) -->
 <meta property="og:type" content="website" />
-<meta property="og:site_name" content="Amanat" />
-<meta property="og:title" content="Amanat — Speak the visit. Amanat writes it." />
-<meta property="og:description" content="Real-time multilingual voice AI for Lady Health Workers — speak a home visit in Urdu, Punjabi, or English and Amanat records it, flags danger signs, and replies in Urdu." />
+<meta property="og:site_name" content="Amanat Health" />
+<meta property="og:title" content="Amanat Health — Speak the visit. Amanat Health writes it." />
+<meta property="og:description" content="Real-time multilingual voice AI for Lady Health Workers — speak a home visit in Urdu, Punjabi, or English and Amanat Health records it, flags danger signs, and replies in Urdu." />
 <meta property="og:url" content="https://maryumakram16.github.io/amanat-voice-agent/" />
 <meta property="og:image" content="https://maryumakram16.github.io/amanat-voice-agent/og-image.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Amanat — Speak the visit. Amanat writes it." />
+<meta property="og:image:alt" content="Amanat Health — Speak the visit. Amanat Health writes it." />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Amanat — Speak the visit. Amanat writes it." />
-<meta name="twitter:description" content="Real-time multilingual voice AI for Lady Health Workers — speak a home visit in Urdu, Punjabi, or English and Amanat records it, flags danger signs, and replies in Urdu." />
+<meta name="twitter:title" content="Amanat Health — Speak the visit. Amanat Health writes it." />
+<meta name="twitter:description" content="Real-time multilingual voice AI for Lady Health Workers — speak a home visit in Urdu, Punjabi, or English and Amanat Health records it, flags danger signs, and replies in Urdu." />
 <meta name="twitter:image" content="https://maryumakram16.github.io/amanat-voice-agent/og-image.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -294,7 +294,10 @@
   }
   .team-card .name { font-size: 0.88rem; font-weight: 500; }
   .team-card .role { font-size: 0.78rem; color: var(--text-soft); margin-top: 2px; }
-  @media (max-width: 720px) { .team-grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 720px) {
+    .team-grid { grid-template-columns: repeat(2, 1fr); }
+    .team-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  }
 </style>
 </head>
 <body>
@@ -303,7 +306,7 @@
 
 <nav class="topnav">
   <div class="wrap">
-    <div class="logo"><span class="dot"></span> Amanat</div>
+    <div class="logo"><span class="dot"></span> Amanat Health</div>
     <button class="menu-btn" id="menuBtn" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">☰</button>
     <div class="navlinks" id="navLinks">
       <a href="#why">Why it matters</a>
@@ -319,14 +322,14 @@
   <div class="glow"></div>
   <div class="wrap">
     <div class="badge"><span class="dot"></span> Built for the AssemblyAI Voice Agent Hackathon</div>
-    <h1 class="display">Speak the visit.<br><span class="grad-text">Amanat writes it.</span></h1>
+    <h1 class="display">Speak the visit.<br><span class="grad-text">Amanat Health writes it.</span></h1>
     <p class="lede">
       Real-time multilingual voice AI for Lady Health Workers — Urdu, Punjabi, and English,
       mixed freely. Try it live below.
     </p>
 
     <div class="mic-stage" id="micStage">
-      <button class="mic-btn" id="micBtn" aria-label="Start speaking to Amanat">
+      <button class="mic-btn" id="micBtn" aria-label="Start speaking to Amanat Health">
         <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="#0B0E14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Z"/>
           <path d="M19 11a7 7 0 0 1-14 0"/>
@@ -476,33 +479,33 @@
       <div class="team-card">
         <div class="avatar">MA</div>
         <div class="name">Maryum Akram</div>
-        <div class="role">Product &amp; coordination</div>
+        <div class="role">Backend &amp; frontend</div>
       </div>
       <div class="team-card">
-        <div class="avatar">S</div>
-        <div class="name">Sehrish</div>
+        <div class="avatar">SR</div>
+        <div class="name">Sehrish Riaz</div>
         <div class="role">Voice agent</div>
       </div>
       <div class="team-card">
-        <div class="avatar">H</div>
-        <div class="name">Hina</div>
+        <div class="avatar">AN</div>
+        <div class="name">Annum Nisar</div>
         <div class="role">Voice agent</div>
-      </div>
-      <div class="team-card">
-        <div class="avatar">A</div>
-        <div class="name">Annum</div>
-        <div class="role">Backend</div>
       </div>
       <div class="team-card">
         <div class="avatar">S</div>
         <div class="name">Shabana</div>
-        <div class="role">Frontend / video</div>
+        <div class="role">Testing</div>
+      </div>
+      <div class="team-card">
+        <div class="avatar">H</div>
+        <div class="name">Hina</div>
+        <div class="role">Demo video &amp; slides</div>
       </div>
     </div>
   </div>
 </section>
 
-<footer>Amanat — built for the AssemblyAI Voice Agent Hackathon.</footer>
+<footer>Amanat Health — built for the AssemblyAI Voice Agent Hackathon.</footer>
 
 <script>
 const BACKEND_WS_URL = "wss://web-production-11fd82.up.railway.app/ws";
@@ -533,9 +536,66 @@ function unlockAudioForSession() {
   player.play().catch(() => {});
 }
 
+// Streamed replies: the server sends {"type":"audio_start"}, then the mp3 in pieces (binary
+// messages) while it's still being made, then {"type":"audio_end"}. Playback starts on the
+// first piece instead of waiting for the whole reply. Only requested when this browser can
+// play a growing mp3 (MediaSource — not on older iPhones); otherwise the server keeps sending
+// each reply as one complete mp3, handled exactly as before.
+const CAN_STREAM_AUDIO = !!(window.MediaSource && MediaSource.isTypeSupported &&
+  MediaSource.isTypeSupported("audio/mpeg"));
+let incomingStream = null; // the streamed reply whose pieces are arriving right now
+
+// Queue items are either {blob} (a complete mp3) or a stream: {stream: true, chunks, ended}.
 function enqueueReply(blob) {
-  audioQueue.push(blob);
+  audioQueue.push({ blob });
   playNextQueued();
+}
+
+function startStreamedReply() {
+  incomingStream = { stream: true, chunks: [], ended: false, pump: null, received: 0 };
+  audioQueue.push(incomingStream);
+  playNextQueued();
+}
+
+function addStreamChunk(buffer) {
+  incomingStream.chunks.push(buffer);
+  incomingStream.received += 1;
+  if (incomingStream.pump) incomingStream.pump();
+}
+
+function endStreamedReply() {
+  if (!incomingStream) return;
+  incomingStream.ended = true;
+  if (incomingStream.pump) incomingStream.pump();
+  incomingStream = null;
+}
+
+// Feeds a stream's pieces into a MediaSource the <audio> element plays from. Pieces that
+// arrived while an earlier reply was still playing are appended all at once.
+function streamSourceUrl(item, onEmpty) {
+  const mediaSource = new MediaSource();
+  mediaSource.addEventListener("sourceopen", () => {
+    let buffer;
+    try {
+      buffer = mediaSource.addSourceBuffer("audio/mpeg");
+    } catch (err) {
+      console.error("[amanat] streaming playback unavailable:", err);
+      onEmpty();
+      return;
+    }
+    item.pump = () => {
+      if (buffer.updating || mediaSource.readyState !== "open") return;
+      if (item.chunks.length) {
+        buffer.appendBuffer(item.chunks.shift());
+      } else if (item.ended) {
+        if (item.received === 0) { onEmpty(); return; } // nothing to play (server-side TTS failed)
+        try { mediaSource.endOfStream(); } catch (e) { /* already ended */ }
+      }
+    };
+    buffer.addEventListener("updateend", item.pump);
+    item.pump();
+  }, { once: true });
+  return URL.createObjectURL(mediaSource);
 }
 
 function playNextQueued() {
@@ -544,10 +604,12 @@ function playNextQueued() {
   muted = true;
   micBtn.classList.add("speaking");
   setStatus("Amanat is replying...", "live");
-  const blob = audioQueue.shift();
-  const url = URL.createObjectURL(blob);
-  player.src = url;
-  player.onended = () => {
+  const item = audioQueue.shift();
+  let finished = false;
+  let url;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
     URL.revokeObjectURL(url);
     isPlayingAudio = false;
     setTimeout(() => {
@@ -557,6 +619,10 @@ function playNextQueued() {
       playNextQueued(); // in case another reply arrived while this one was playing
     }, ECHO_TAIL_MS);
   };
+  url = item.stream ? streamSourceUrl(item, finish) : URL.createObjectURL(item.blob);
+  player.src = url;
+  player.onended = finish;
+  player.onerror = finish; // a broken reply must never leave the mic muted
   player.play().catch((err) => console.error("[amanat] playback blocked:", err));
 }
 
@@ -684,7 +750,8 @@ async function startListening() {
   unlockAudioForSession(); // must run synchronously here, before any await, to count as part of the click gesture
   errorShown = false;
   setStatus("Connecting...", "");
-  const sock = new WebSocket(BACKEND_WS_URL);
+  // ?stream=1 asks for streamed replies. A server that doesn't know it simply ignores it.
+  const sock = new WebSocket(BACKEND_WS_URL + (CAN_STREAM_AUDIO ? "?stream=1" : ""));
   ws = sock;
   sock.binaryType = "arraybuffer";
 
@@ -753,12 +820,20 @@ async function startListening() {
       } else if (msg.type === "skip") {
         addBubble("(off-topic — nothing recorded)", { tag: "Amanat" });
       } else if (msg.type === "quota_exceeded") {
-        addBubble("Amanat is at capacity right now — please try again in a few minutes.", { tag: "Amanat" });
+        addBubble("Amanat Health is at capacity right now — please try again in a few minutes.", { tag: "Amanat" });
+      } else if (msg.type === "audio_start") {
+        startStreamedReply();
+      } else if (msg.type === "audio_end") {
+        endStreamedReply();
       }
       return;
     }
-    const blob = new Blob([event.data], { type: "audio/mpeg" });
-    enqueueReply(blob);
+    // Binary message = Amanat's spoken reply: a piece of a streamed reply, or a complete mp3.
+    if (incomingStream) {
+      addStreamChunk(event.data);
+    } else {
+      enqueueReply(new Blob([event.data], { type: "audio/mpeg" }));
+    }
   };
 
   sock.onclose = () => {
@@ -766,7 +841,7 @@ async function startListening() {
     if (!errorShown) {
       showError(listening
         ? "Connection lost — tap to reconnect"
-        : "Couldn't reach Amanat — the server may be waking up, tap to try again");
+        : "Couldn't reach Amanat Health — the server may be waking up, tap to try again");
     }
     stopListening();
   };
@@ -775,6 +850,7 @@ async function startListening() {
 function stopListening() {
   const sock = ws;
   ws = null; // mark as stopped first so this socket's onclose doesn't run again
+  endStreamedReply(); // a reply cut off mid-stream plays what arrived, then ends normally
   if (workletNode) workletNode.disconnect();
   if (mediaStream) mediaStream.getTracks().forEach((t) => t.stop());
   if (audioCtx && audioCtx.state !== "closed") audioCtx.close();
