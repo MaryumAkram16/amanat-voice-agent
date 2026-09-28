@@ -78,6 +78,8 @@ exactly as she would say it out loud to a colleague. Amanat Health:
 - **Remembers the conversation.** A follow-up sentence about the same patient is merged into
   one record, not filed as a second, disconnected entry — and if she starts describing someone
   without saying who, the assistant asks directly.
+- **Keeps the record.** Every visit is saved (on a persistent volume) and shown on the admin
+  dashboard; the demo page also lists the visits recorded from that browser after a reload.
 - **Remembers patients across visits.** A returning patient is linked to their earlier visits,
   even when the name comes out in a different script; the reply mentions what changed, and a
   symptom reported on three visits in a row is escalated.
@@ -379,8 +381,9 @@ every line shows the time since her sentence was finalised:
 
 ## WebSocket message reference
 
-**Browser → server:** binary 16 kHz PCM16 microphone audio. Connect to `/ws`, or `/ws?stream=1`
-to receive streamed replies.
+**Browser → server:** binary 16 kHz PCM16 microphone audio. Connect to `/ws`. Optional query
+parameters: `stream=1` to receive streamed replies, and `device=<random id>` to tag the visits
+with this browser (see *HTTP endpoints* below).
 
 **Server → browser (JSON):**
 
@@ -397,6 +400,15 @@ to receive streamed replies.
 **Server → browser (binary):** the spoken reply — a complete mp3, or, between `audio_start`
 and `audio_end`, one piece of a streamed mp3.
 
+### HTTP endpoints
+
+| Endpoint | Access | Returns |
+|---|---|---|
+| `GET /admin` | admin password | The dashboard page |
+| `GET /api/visits` | admin password | All visits + totals (the dashboard polls it every 5 s) |
+| `GET /api/analytics` | admin password | Visits per day, top symptoms, escalation rate |
+| `GET /api/my-visits?device=<id>` | public | Only the visits recorded from that browser, so the demo page can show them again after a reload |
+
 ---
 
 ## Known limitations
@@ -410,8 +422,10 @@ and `audio_end`, one piece of a streamed mp3.
   common cases; test in a quiet room with the microphone close.
 - **Streaming playback needs MediaSource.** Older iPhones get complete replies instead —
   slightly later, but otherwise identical.
-- **SQLite resets on every Railway redeploy** unless a persistent volume is mounted at
-  `/data` — see `DEPLOY.md`.
+- **Visits are only kept if Railway has a persistent volume mounted at `/data`.** Without it,
+  every redeploy or restart empties the admin dashboard. The startup log says which case
+  you're in (`[db] using /data/amanat.db` vs `[db] WARNING: … NOT on a persistent volume`);
+  setup steps are in `DEPLOY.md`.
 - **This is a hackathon prototype handling patient-shaped data.** No authentication beyond the
   admin password, no encryption at rest beyond Railway's defaults, and no consent flow. Test
   with fictional names, never real patients.

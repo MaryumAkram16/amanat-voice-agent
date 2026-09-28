@@ -511,6 +511,28 @@
 const BACKEND_WS_URL = "wss://web-production-11fd82.up.railway.app/ws";
 
 const ECHO_TAIL_MS = 600;
+// Same host as the WebSocket, over https, for the small "my visits" API.
+const API_BASE = BACKEND_WS_URL.replace(/^ws/, "http").replace(/\/ws$/, "");
+
+// A random id kept in this browser, so the visits recorded here can be listed again after a
+// reload. It's never shown or shared; without browser storage (private mode) it just lasts
+// for this page view.
+const DEVICE_ID = (() => {
+  const fresh = () => (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+  try {
+    let id = localStorage.getItem("amanat_device_id");
+    if (!id) {
+      id = fresh();
+      localStorage.setItem("amanat_device_id", id);
+    }
+    return id;
+  } catch (e) {
+    return fresh();
+  }
+})();
+
 const micStage = document.getElementById("micStage");
 const micBtn = document.getElementById("micBtn");
 const micStatus = document.getElementById("micStatus");
@@ -676,7 +698,7 @@ function addBubble(text, opts = {}) {
   box.appendChild(body);
   row.appendChild(box);
   consoleEl.appendChild(row);
-  row.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  if (!opts.quiet) row.scrollIntoView({ behavior: "smooth", block: "nearest" }); // history loads quietly
 }
 
 const VISIT_TYPE_LABELS = {
@@ -750,8 +772,11 @@ async function startListening() {
   unlockAudioForSession(); // must run synchronously here, before any await, to count as part of the click gesture
   errorShown = false;
   setStatus("Connecting...", "");
-  // ?stream=1 asks for streamed replies. A server that doesn't know it simply ignores it.
-  const sock = new WebSocket(BACKEND_WS_URL + (CAN_STREAM_AUDIO ? "?stream=1" : ""));
+  // ?stream=1 asks for streamed replies; ?device= tags the visits with this browser so they
+  // can be shown again after a reload. A server that doesn't know them simply ignores them.
+  const params = new URLSearchParams({ device: DEVICE_ID });
+  if (CAN_STREAM_AUDIO) params.set("stream", "1");
+  const sock = new WebSocket(BACKEND_WS_URL + "?" + params.toString());
   ws = sock;
   sock.binaryType = "arraybuffer";
 
@@ -863,6 +888,45 @@ function stopListening() {
   updatePipelineStep(null);
   updateLiveTranscript("", false);
 }
+
+// Visits recorded earlier from this browser, shown again when the page loads. If the server
+// is asleep or older than this page, nothing is shown and nothing breaks.
+function formatWhen(seconds) {
+  const d = new Date(seconds * 1000);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? "today " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " +
+      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadMyVisits() {
+  let visits;
+  try {
+    const res = await fetch(`${API_BASE}/api/my-visits?device=${encodeURIComponent(DEVICE_ID)}`);
+    if (!res.ok) return;
+    visits = (await res.json()).visits || [];
+  } catch (e) {
+    return;
+  }
+  if (!visits.length) return;
+  addBubble(`${visits.length} visit${visits.length === 1 ? "" : "s"} recorded earlier from this device`,
+            { tag: "History", quiet: true });
+  visits.forEach((v) => {
+    const name = v.patient_name || "(no name given)";
+    const details = [v.symptoms.join(", "), v.temp && `temp ${v.temp}`, v.bp && `BP ${v.bp}`]
+      .filter(Boolean).join(" · ");
+    const typeTag = visitTypeTag(v);
+    if (v.escalated) {
+      addBubble(`${name} — ESCALATED: ${v.reason}${details ? "\n" + details : ""}`,
+                { tag: `🚨 Escalated${typeTag} · ${formatWhen(v.recorded_at)}`, escalate: true, quiet: true });
+    } else {
+      addBubble(`${name} — ${details || "recorded"}`,
+                { tag: `Visit recorded${typeTag} · ${formatWhen(v.recorded_at)}`, record: true, quiet: true });
+    }
+  });
+}
+loadMyVisits();
 
 // A tap while connecting or listening stops; otherwise it starts.
 // Mobile menu: toggle with ☰, close after picking a link.

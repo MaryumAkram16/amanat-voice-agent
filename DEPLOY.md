@@ -47,9 +47,38 @@ screen during a live demo to show it updating in real time.
 
 **Important:** this page shows real patient names and health details entered during
 testing. Use fictional names for any demo or recorded video — never real patients' data,
-even during internal testing. The data is stored in a local SQLite file (`amanat.db`)
-on the Railway container, which resets on redeploy — this is fine for a hackathon demo,
-but is not a durable production database.
+even during internal testing.
+
+### Keep visits after redeploys and restarts (persistent volume)
+
+Visits are stored in a SQLite file. Railway **wipes the container's own disk on every
+redeploy and restart**, so without a volume the admin dashboard is empty again after each
+deploy. To keep them:
+
+1. Open your Railway project and select the backend service.
+2. Add a volume to it (right-click the service on the project canvas → **Attach Volume**, or
+   **+ New → Volume** and connect it to the service).
+3. Set the volume's **mount path** to `/data`.
+4. Optional but recommended: in **Variables**, add `DB_PATH=/data/amanat.db`.
+5. Redeploy once. The app notices `/data` and stores `amanat.db` there from now on.
+
+Check it worked: the deploy logs print one of these at startup.
+
+```
+[db] using /data/amanat.db (12 visits stored)                         <- good, visits persist
+[db] WARNING: using /app/amanat.db, which is NOT on a persistent volume  <- no volume yet
+```
+
+Visits recorded before the volume existed can't be recovered, only the ones after it.
+
+### Visits on the demo page after a reload
+
+The public demo page (`docs/index.html`) now lists the visits recorded **from that browser**
+when it loads, so a reload no longer empties it. Each browser keeps a random id in its local
+storage and only ever gets its own visits back from `/api/my-visits`; all visits together are
+only visible on the password-protected `/admin` page. A private/incognito window starts with
+a fresh id, and clearing site data forgets it. This also needs the volume above: if the
+database was wiped, there's nothing to show.
 
 ## 3. Point the frontend at your backend, then deploy to GitHub Pages
 

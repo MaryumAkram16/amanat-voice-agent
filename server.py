@@ -162,6 +162,24 @@ def api_analytics(_auth: bool = Depends(require_admin)):
     return db.get_analytics()
 
 
+# A browser's own visit history for the public demo page. The device id is a random value the
+# page generates and keeps in its storage, so a browser only ever gets back what it recorded
+# itself. Everyone's visits stay behind the admin password.
+_DEVICE_ID = re.compile(r"^[A-Za-z0-9-]{16,64}$")
+
+
+def _valid_device(value):
+    return value if isinstance(value, str) and _DEVICE_ID.match(value) else None
+
+
+@app.get("/api/my-visits")
+def api_my_visits(device: str = ""):
+    device_id = _valid_device(device)
+    if device_id is None:
+        raise HTTPException(status_code=400, detail="missing or invalid device id")
+    return {"visits": db.get_device_visits(device_id)}
+
+
 @app.get("/admin", response_class=HTMLResponse)
 def admin_page(_auth: bool = Depends(require_admin)):
     # Deliberately NOT in static/ — anything there is served unauthenticated at its own path.
@@ -175,7 +193,8 @@ async def ws_endpoint(websocket: WebSocket):
     # A page that can play mp3 in pieces connects with ?stream=1 and gets each reply streamed
     # while it's being made. Any other page (or STREAM_AUDIO=0 here) gets complete mp3s as before.
     stream_audio = STREAM_AUDIO and websocket.query_params.get("stream") == "1"
-    session = Session(loop, websocket, stream_audio=stream_audio)
+    session = Session(loop, websocket, stream_audio=stream_audio,
+                      device_id=_valid_device(websocket.query_params.get("device")))
 
     def send_json_threadsafe(payload: dict):
         """For messages that don't belong to Session (partial transcripts, connection-level
