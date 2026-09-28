@@ -1,4 +1,4 @@
-# Deploying Amanat as a web app
+# Deploying Amanat Health as a web app
 
 This folder turns your existing `agents.py` pipeline into a browser-based voice agent:
 browser mic -> WebSocket -> this backend -> AssemblyAI -> Gemini agents -> edge-tts ->
@@ -14,7 +14,7 @@ uvicorn server:app --reload
 
 Open `http://localhost:8000` in Chrome (needs a real browser, not curl — it uses the
 microphone and AudioWorklet APIs). Click Start, allow mic access, and speak a test
-sentence from your `amanat_voice_tests.xlsx` sheet. You should hear Amanat reply.
+sentence from your `amanat_voice_tests.xlsx` sheet. You should hear Amanat Health reply.
 
 Note: `static/app.js` currently points `BACKEND_WS_URL` at a placeholder Railway URL.
 For local testing, temporarily change it to `ws://localhost:8000/ws` — just remember to

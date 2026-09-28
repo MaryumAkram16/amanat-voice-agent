@@ -9,6 +9,7 @@ from google.genai import types
 
 import care
 import db
+import timing
 
 load_dotenv()
 
@@ -77,18 +78,52 @@ _last_model = None
 _no_thinking_config = set()
 _THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)
 
+# Latency guards. Without a timeout the SDK waits forever on a stuck request (its default is
+# no timeout, and it does no retries of its own), so one hung call used to stall the whole reply.
+# Railway logs (27 Sep): healthy calls took 0.4-2.2s, but some single calls took 10.7-18.9s.
+# Past GEMINI_TIMEOUT_S it's quicker to ask the next model than to keep waiting.
+GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "8"))
+# A model that just timed out, was overloaded (503) or hit its per-minute limit is skipped for
+# this long, so every following turn doesn't pay the same failover delay again. It isn't
+# blacklisted: once the cooldown passes it's tried first again. 0 turns this off.
+MODEL_COOLDOWN_S = float(os.environ.get("MODEL_COOLDOWN_S", "60"))
+_cooldown_until = {}
+
 
 def _network_error(msg):
     text = msg.lower()
     return any(s in text for s in ("getaddrinfo", "connecterror", "connection", "timed out", "timeout"))
 
 
-def call_llm(system_prompt, user_text, json_mode=False):
-    """Send one request to Gemini.
-    - per-minute limit  -> wait a little and retry
-    - per-day limit     -> give up on that model, try the next one in MODELS
-    - model not found   -> skip it
-    - no internet       -> retry a few times, then raise NetworkDown"""
+def _timed_out(error, msg):
+    return (
+        "timeout" in type(error).__name__.lower()
+        or "timed out" in msg.lower()
+        or "DEADLINE_EXCEEDED" in msg
+    )
+
+
+def _model_order():
+    """Models to try, in the configured order, with any that are cooling down moved to the
+    end (still tried as a last resort, never dropped)."""
+    now = time.time()
+    live = [m for m in MODELS if m not in _dead_models]
+    ready = [m for m in live if _cooldown_until.get(m, 0) <= now]
+    return ready + [m for m in live if m not in ready]
+
+
+def _cool_down(model):
+    if MODEL_COOLDOWN_S > 0:
+        _cooldown_until[model] = time.time() + MODEL_COOLDOWN_S
+
+
+def call_llm(system_prompt, user_text, json_mode=False, purpose="llm"):
+    """Send one request to Gemini. purpose is only a label for the [timing] logs.
+    - timeout / overloaded -> move on to the next model quickly (and let this one cool down)
+    - per-minute limit     -> next model if there is one, else wait a little and retry
+    - per-day limit        -> give up on that model, try the next one in MODELS
+    - model not found      -> skip it
+    - no internet          -> retry a couple of times, then raise NetworkDown"""
     global _last_model
 
     def make_config(model):
@@ -98,34 +133,55 @@ def call_llm(system_prompt, user_text, json_mode=False):
             response_mime_type="application/json" if json_mode else "text/plain",
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             thinking_config=None if model in _no_thinking_config else _THINKING,
+            http_options=types.HttpOptions(timeout=int(GEMINI_TIMEOUT_S * 1000)),
         )
 
-    for model in MODELS:
-        if model in _dead_models:
-            continue
+    prompt_chars = len(system_prompt or "") + len(user_text or "")
+    order = _model_order()
+    for index, model in enumerate(order):
+        has_next = index < len(order) - 1
         busy_tries = 0
         net_tries = 0
+        timeout_tries = 0
         while True:
+            started = time.perf_counter()
             try:
-                started = time.time()
                 resp = client.models.generate_content(
                     model=model, contents=user_text, config=make_config(model)
                 )
+                elapsed = time.perf_counter() - started
                 if model != _last_model:
                     print(f"  [using model: {model}]")
                     _last_model = model
-                print(f"  [llm {time.time() - started:.1f}s]")
-                return (resp.text or "").strip()
+                print(f"  [llm {elapsed:.1f}s]")
+                text = (resp.text or "").strip()
+                timing.log("llm", elapsed, purpose=purpose, model=model, result="ok",
+                           prompt_chars=prompt_chars, output_chars=len(text))
+                return text
             except Exception as e:
+                elapsed = time.perf_counter() - started
                 msg = str(e)
+
+                def failed(result):
+                    timing.log("llm", elapsed, purpose=purpose, model=model, result=result)
+
                 if "INVALID_ARGUMENT" in msg and "thinking" in msg.lower() and model not in _no_thinking_config:
+                    failed("thinking_rejected")
                     print(f"  ({model} rejected the thinking setting - calling it without)")
                     _no_thinking_config.add(model)
                     continue
                 if "RESOURCE_EXHAUSTED" in msg:
                     if "PerDay" in msg:
+                        failed("daily_quota")
                         print(f"  (daily free quota used up for {model} - trying next model)")
                         _dead_models.add(model)
+                        break
+                    failed("per_minute_limit")
+                    if has_next:
+                        # Quotas are per model, so another model can answer right now instead
+                        # of waiting 10-30s for this one's minute to roll over.
+                        print(f"  (per-minute limit on {model} - trying next model)")
+                        _cool_down(model)
                         break
                     busy_tries += 1
                     if busy_tries > 3:
@@ -135,26 +191,41 @@ def call_llm(system_prompt, user_text, json_mode=False):
                     time.sleep(wait)
                     continue
                 if "NOT_FOUND" in msg:
+                    failed("not_found")
                     print(f"  (model {model} not available for your account - skipping)")
                     _dead_models.add(model)
                     break
                 if "UNAVAILABLE" in msg or "503" in msg:
+                    failed("unavailable")
                     busy_tries += 1
-                    if busy_tries > 2:
-                        # Temporary overload, not exhausted quota - don't blacklist the model,
-                        # just use a different one for THIS request; it may work again shortly.
-                        # Fails over quickly (~5s) rather than burning ~30s retrying one model.
+                    # Temporary overload, not exhausted quota - don't blacklist the model.
+                    # With another model to try: one quick retry, then fail over (was 3s + 6s
+                    # of sleeping first). Without one: a few short retries on this model.
+                    if busy_tries > (1 if has_next else 3):
                         print(f"  ({model} still unavailable - trying next model)")
+                        _cool_down(model)
                         break
-                    time.sleep(3 * busy_tries)
+                    time.sleep(1 if has_next else 2 * busy_tries)
                     continue
+                if _timed_out(e, msg):
+                    failed("timeout")
+                    timeout_tries += 1
+                    _cool_down(model)
+                    if has_next:
+                        print(f"  ({model} took longer than {GEMINI_TIMEOUT_S:.0f}s - trying next model)")
+                        break
+                    if timeout_tries > 1:
+                        raise NetworkDown(f"{model} timed out twice after {GEMINI_TIMEOUT_S:.0f}s: {msg}")
+                    continue  # last model: one more try before giving up
                 if _network_error(msg):
+                    failed("network")
                     net_tries += 1
-                    if net_tries > 3:
+                    if net_tries > 2:
                         raise NetworkDown(msg)
-                    print("  (no connection to Google, retrying in 5s...)")
-                    time.sleep(5)
+                    print("  (no connection to Google, retrying shortly...)")
+                    time.sleep(1.5 * net_tries)
                     continue
+                failed("error")
                 raise
     raise QuotaExhausted(
         "All models are out of free quota for today (or unavailable): " + ", ".join(MODELS)
@@ -251,7 +322,7 @@ The text may be Urdu script, Roman Urdu, Punjabi, English, or a mix, and may be 
 Intents:
 {INTENT_RULES}
 Return ONLY JSON: {{"intent": "new_visit" | "follow_up" | "emergency" | "off_topic"}}"""
-    result = parse_json(call_llm(prompt, transcript, json_mode=True), {})
+    result = parse_json(call_llm(prompt, transcript, json_mode=True, purpose="router"), {})
     if not isinstance(result, dict) or result.get("intent") not in VALID_INTENTS:
         return {"intent": "new_visit"}  # safe default: never silently drop a visit
     return result
@@ -263,7 +334,7 @@ def extraction_agent(transcript):
 Rules:
 {EXTRACTION_RULES}
 Return ONLY JSON: {{"patient_name": str|null, "symptoms": [str], "vitals": {{"temp": str|null, "bp": str|null}}, "notes": str, "visit_type": str, "details": {{}}}}"""
-    data = parse_json(call_llm(prompt, transcript, json_mode=True), None)
+    data = parse_json(call_llm(prompt, transcript, json_mode=True, purpose="extraction"), None)
     return normalise_extraction(data)
 
 
@@ -280,7 +351,7 @@ Return ONLY JSON: {{"escalate": true | false, "reason": "<short English reason>"
         f"Original transcript: {transcript}\n"
         f"Extracted data: {json.dumps(extracted, ensure_ascii=False)}"
     )
-    data = parse_json(call_llm(prompt, user, json_mode=True), None)
+    data = parse_json(call_llm(prompt, user, json_mode=True, purpose="triage"), None)
     if isinstance(data, dict) and isinstance(data.get("escalate"), bool):
         return {"escalate": data["escalate"], "reason": str(data.get("reason", ""))}
     return {"escalate": True, "reason": "triage output unclear - escalating to be safe"}
@@ -296,7 +367,8 @@ def _known_patients_text(patients):
 def combined_agent(transcript, current_visit_id=None):
     """Router + extraction + triage + patient matching + the spoken reply, in ONE Gemini call.
     Returns None if the answer can't be understood, so the caller can fall back."""
-    patients = db.recent_patients(exclude_visit_id=current_visit_id)
+    with timing.timed("db.recent_patients"):
+        patients = db.recent_patients(exclude_visit_id=current_visit_id)
     prompt = f"""You analyse one spoken visit note from a Lady Health Worker (LHW) in Pakistan.
 The text may be Urdu script, Roman Urdu, Punjabi, English, or a mix, and may be noisy.
 Do three jobs and return them together.
@@ -322,7 +394,8 @@ KNOWN PATIENTS:
 JOB 5 - what Amanat says back. Both fields follow the voice rules below.
 - "reply": if escalating, confirm the visit is recorded and calmly say the case looks serious and
   she should contact her supervisor or the nearest health facility right away. Otherwise, briefly
-  confirm the visit for the patient has been recorded. Refer to the patient by name if known.
+  confirm the visit for the patient has been recorded. Refer to the patient by name if known,
+  spelled exactly as in "patient_name_urdu" (never in Latin or Devanagari letters).
   If you matched a known patient, compare with their last visit in a few words (for example
   that the fever from 3 days ago is now gone, or that the cough is still there).
 - "follow_up_question": ONE short respectful question asking ONLY for the FIRST missing item in
@@ -332,6 +405,8 @@ JOB 5 - what Amanat says back. Both fields follow the voice rules below.
   3. for the visit_type:
 {care.checklist_rules_text()}
   Base it strictly on what was said; never assume a baby, child or pregnancy that was not mentioned.
+- "patient_name_urdu": the patient's name written in Urdu script, so the voice can say it, or
+  null if no name was given.
 Voice rules:
 {AMANAT_PERSONA}
 
@@ -341,8 +416,9 @@ Return ONLY JSON in exactly this shape:
   "triage": {{"escalate": true | false, "reason": "<short English reason>"}},
   "matched_patient_id": int|null,
   "reply": "<Urdu script>",
-  "follow_up_question": "<Urdu script, or empty>"}}"""
-    data = parse_json(call_llm(prompt, transcript, json_mode=True), None)
+  "follow_up_question": "<Urdu script, or empty>",
+  "patient_name_urdu": "<Urdu script>" | null}}"""
+    data = parse_json(call_llm(prompt, transcript, json_mode=True, purpose="combined"), None)
     if not isinstance(data, dict) or data.get("intent") not in VALID_INTENTS:
         return None
     extracted = normalise_extraction(data.get("extracted"))
@@ -364,6 +440,7 @@ Return ONLY JSON in exactly this shape:
         "triage": {"escalate": escalate, "reason": reason},
         "reply": text_field("reply"),
         "follow_up_question": text_field("follow_up_question"),
+        "name_urdu": text_field("patient_name_urdu") or None,
         "matched_patient_id": matched,
     }
 
@@ -390,6 +467,10 @@ def verification_agent(extracted, prewritten_question=""):
         return {"ok": True, "missing": []}
     if prewritten_question:
         return {"ok": False, "missing": missing, "follow_up_question": prewritten_question}
+    if REPLY_TEMPLATES and missing[0] in QUESTION_TEMPLATES:
+        # Same rule the combined prompt uses (ask only for the FIRST missing item), without
+        # another Gemini round trip.
+        return {"ok": False, "missing": missing, "follow_up_question": QUESTION_TEMPLATES[missing[0]]}
     known = json.dumps(extracted, ensure_ascii=False)
     question = call_llm(
         AMANAT_PERSONA,
@@ -399,13 +480,83 @@ def verification_agent(extracted, prewritten_question=""):
         "Base the question strictly on what is known above. Do NOT assume or mention a baby, "
         "child, pregnancy, or any other detail that was not already stated - if nothing else is "
         "known, keep the question completely general. Reply with only the question.",
+        purpose="follow_up_question",
     )
     return {"ok": False, "missing": missing, "follow_up_question": question}
 
 
+# ---------------------------------------------------------------- fixed replies (no Gemini call)
+# Routine confirmations and questions don't need an LLM to write them. Fixed Urdu sentences
+# save a Gemini round trip where one was being made, and make the audio cacheable (web_tts).
+# The LLM still writes: every escalation, and the confirmation for a patient seen before (it
+# compares with their last visit). Set REPLY_TEMPLATES=0 to go back to LLM-written text
+# everywhere. Have a native speaker on the team check these sentences.
+REPLY_TEMPLATES = os.environ.get("REPLY_TEMPLATES", "1").strip().lower() not in ("0", "false", "no", "off")
+
+TEMPLATE_RECORDED_NAMED = "{name} کا وزٹ ریکارڈ ہو گیا ہے۔"
+TEMPLATE_RECORDED = "وزٹ ریکارڈ ہو گیا ہے۔"
+TEMPLATE_URGENT_UPDATED = "مریض کی تفصیلات فوری کیس میں شامل کر دی گئی ہیں۔"
+TEMPLATE_SAME_OR_NEW = "کیا یہ اسی مریض کے بارے میں ہے، یا کسی نئے مریض کے بارے میں؟"
+
+# Follow-up questions, keyed by the English description find_missing() returns.
+_CARE_QUESTIONS_BY_KEY = {
+    "pregnancy_month": "وہ حمل کے کون سے مہینے میں ہیں؟",
+    "bp": "ان کا بلڈ پریشر کتنا ہے؟",
+    "days_since_delivery": "ان کی ڈیلیوری کو کتنے دن ہوئے ہیں؟",
+    "bleeding": "کیا انہیں زیادہ خون آ رہا ہے؟",
+    "child_age_weeks": "بچے کی عمر کتنی ہے؟",
+    "fp_method": "وہ خاندانی منصوبہ بندی کا کون سا طریقہ استعمال کر رہی ہیں؟",
+}
+QUESTION_TEMPLATES = {
+    "patient name": "مریض کا نام کیا ہے؟",
+    "symptoms or health details": "مریض کو کیا تکلیف ہے؟",
+    care.PRE_ECLAMPSIA_CHECK: "کیا انہیں شدید سر درد، چہرے یا ہاتھوں پر سوجن، یا دھندلا نظر آنے کی شکایت ہے؟",
+}
+for _items in care.CHECKLISTS.values():
+    for _key, _desc in _items:
+        if _key in _CARE_QUESTIONS_BY_KEY:
+            QUESTION_TEMPLATES[_desc] = _CARE_QUESTIONS_BY_KEY[_key]
+
+# Phrases with no name in them: synthesized once at startup so they play instantly.
+FIXED_PHRASES = [TEMPLATE_RECORDED, TEMPLATE_URGENT_UPDATED, TEMPLATE_SAME_OR_NEW] + sorted(set(QUESTION_TEMPLATES.values()))
+
+_URDU_NAME = re.compile(r"^[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿\s]+$")
+
+
+def speakable_name(*candidates):
+    """First candidate written purely in Urdu/Arabic script, or None. A Latin or Devanagari
+    name (the STT sometimes writes those) would be mispronounced by the Urdu voice, so it
+    never goes into a template; the LLM-written reply is used instead."""
+    for name in candidates:
+        if isinstance(name, str) and name.strip() and _URDU_NAME.match(name.strip()):
+            return name.strip()
+    return None
+
+
+def template_recorded(patient_name, name_urdu=None):
+    """Fixed "visit recorded" sentence, or None if it can't be said properly (a name that
+    isn't available in Urdu script), so the caller falls back to LLM-written text."""
+    if not REPLY_TEMPLATES:
+        return None
+    if not patient_name:
+        return TEMPLATE_RECORDED
+    name = speakable_name(name_urdu, patient_name)
+    return TEMPLATE_RECORDED_NAMED.format(name=name) if name else None
+
+
 # ---------------------------------------------------------------- reply
-def reply_agent(extracted, triage):
-    name = extracted.get("patient_name") or "the patient (name not known yet)"
+def use_urdu_name(text, name, name_urdu):
+    """Swap a name the STT wrote in Latin/Devanagari letters for its Urdu-script spelling, so
+    the Urdu voice pronounces it properly. No-op when there's nothing safe to swap in."""
+    urdu = speakable_name(name_urdu)
+    if not text or not name or not urdu or name == urdu:
+        return text
+    return text.replace(name, urdu)
+
+
+def reply_agent(extracted, triage, name_urdu=None):
+    # Give Gemini the Urdu-script spelling when known, so the spoken name matches it.
+    name = speakable_name(name_urdu) or extracted.get("patient_name") or "the patient (name not known yet)"
     if triage["escalate"]:
         task = (
             f"Confirm that the visit for {name} is recorded, and calmly say this case looks "
@@ -415,7 +566,8 @@ def reply_agent(extracted, triage):
     else:
         task = f"Confirm briefly that the visit for {name} has been recorded."
     return call_llm(
-        AMANAT_PERSONA, task + " Reply with only the spoken sentences, in Urdu script."
+        AMANAT_PERSONA, task + " Reply with only the spoken sentences, in Urdu script.",
+        purpose="reply",
     )
 
 
@@ -428,6 +580,8 @@ def run_agents(transcript, combined=True, current_visit_id=None):
     analysis = combined_agent(transcript, current_visit_id) if combined else None
 
     if analysis is None:  # combined answer unusable (or combined=False): use separate agents
+        # 3 sequential Gemini calls instead of 1 - shows up as a very slow turn.
+        timing.log("pipeline.fallback_to_separate_agents")
         intent = router_agent(transcript)["intent"]
         if intent == "off_topic":
             return {"intent": intent, "outcome": "skip"}
@@ -445,7 +599,10 @@ def run_agents(transcript, combined=True, current_visit_id=None):
     # Known patient: look at their past visits. A symptom that keeps coming back visit after
     # visit is a reason to escalate even when each visit alone looks mild.
     patient_id = analysis.get("matched_patient_id")
-    history = db.patient_history(patient_id, exclude_visit_id=current_visit_id) if patient_id else []
+    history = []
+    if patient_id:
+        with timing.timed("db.patient_history"):
+            history = db.patient_history(patient_id, exclude_visit_id=current_visit_id)
     if history and not triage["escalate"]:
         persistent = care.persistent_symptoms(extracted.get("symptoms"), history)
         if persistent:
@@ -474,6 +631,7 @@ def run_agents(transcript, combined=True, current_visit_id=None):
         "verification": verification,
         "outcome": outcome,
         "reply": analysis.get("reply", ""),  # pre-written by combined_agent; "" if unavailable
+        "name_urdu": analysis.get("name_urdu"),
         "patient_id": patient_id,
         "history": history,
     }
