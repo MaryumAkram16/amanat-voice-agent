@@ -89,12 +89,16 @@ class Session:
     process_sync() is called from the background STT thread (see server.py) — that's fine,
     since every call inside it (Gemini, edge-tts) is a normal blocking call."""
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, websocket, stream_audio: bool = False):
+    def __init__(self, loop: asyncio.AbstractEventLoop, websocket, stream_audio: bool = False,
+                 device_id=None):
         self.loop = loop
         self.websocket = websocket
         # True when the browser asked for replies in pieces (see server.py). Otherwise every
         # reply goes out as one complete mp3, exactly as before.
         self.stream_audio = stream_audio
+        # Random id the demo page keeps in its browser storage; visits are saved with it so the
+        # page can show "your recorded visits" again after a reload (see db.get_device_visits).
+        self.device_id = device_id
         self._pending = None
         self._recent = None
         self._clarify = None
@@ -223,7 +227,8 @@ class Session:
         in the browser. Returns the visit id."""
         with timing.timed("db.save_visit"):
             visit_id, patient_id = db.save_visit(
-                extracted, triage, patient_id=result.get("patient_id"), visit_id=visit_id
+                extracted, triage, patient_id=result.get("patient_id"), visit_id=visit_id,
+                device_id=self.device_id,
             )
         self._last_patient_id = patient_id  # kept with the visit in _remember()
         history = result.get("history") or []

@@ -45,12 +45,20 @@ def init_db():
     # Columns added after the first release. The volume on Railway keeps the old table,
     # so add them in place instead of recreating it (that would delete visit history).
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(visits)")}
-    for column, kind in (("patient_id", "INTEGER"), ("visit_type", "TEXT"), ("details", "TEXT")):
+    for column, kind in (("patient_id", "INTEGER"), ("visit_type", "TEXT"), ("details", "TEXT"),
+                         ("device_id", "TEXT")):
         if column not in existing:
             conn.execute(f"ALTER TABLE visits ADD COLUMN {column} {kind}")
     _backfill_patients(conn)
     conn.commit()
+    total = conn.execute("SELECT COUNT(*) AS c FROM visits").fetchone()["c"]
     conn.close()
+    # Printed at every start so the Railway logs show whether visits will survive a redeploy.
+    if str(DB_PATH).startswith("/data/") or os.environ.get("DB_PATH"):
+        print(f"[db] using {DB_PATH} ({total} visits stored)")
+    else:
+        print(f"[db] WARNING: using {DB_PATH}, which is NOT on a persistent volume - all "
+              f"{total} visits will be lost on the next redeploy or restart. See DEPLOY.md.")
 
 
 def _backfill_patients(conn):
@@ -72,12 +80,13 @@ def _backfill_patients(conn):
         conn.execute("UPDATE visits SET patient_id = ? WHERE id = ?", (by_name[key], row["id"]))
 
 
-def save_visit(extracted: dict, triage: dict, patient_id=None, visit_id=None):
+def save_visit(extracted: dict, triage: dict, patient_id=None, visit_id=None, device_id=None):
     """Save one visit, or update visit_id when the LHW is still adding to the same visit
     (a follow-up answer or an extra sentence), so one visit never becomes several rows.
     patient_id is an existing patient the LLM matched this visit to (validated here);
     otherwise the visit keeps its earlier patient, or a new patient is created when a
-    name is known. Returns (visit_id, patient_id)."""
+    name is known. device_id is the browser that recorded it (see get_device_visits).
+    Returns (visit_id, patient_id)."""
     conn = _connect()
     name = extracted.get("patient_name")
     if patient_id is not None:
@@ -108,17 +117,18 @@ def save_visit(extracted: dict, triage: dict, patient_id=None, visit_id=None):
     if visit_id is not None:
         conn.execute(
             """UPDATE visits SET patient_name = ?, symptoms = ?, vitals_temp = ?, vitals_bp = ?,
-               notes = ?, escalate = ?, reason = ?, patient_id = ?, visit_type = ?, details = ?
+               notes = ?, escalate = ?, reason = ?, patient_id = ?, visit_type = ?, details = ?,
+               device_id = COALESCE(device_id, ?)
                WHERE id = ?""",
-            values + (visit_id,),
+            values + (device_id, visit_id),
         )
     else:
         visit_id = conn.execute(
             """INSERT INTO visits
                (patient_name, symptoms, vitals_temp, vitals_bp, notes, escalate, reason,
-                patient_id, visit_type, details, recorded_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            values + (time.time(),),
+                patient_id, visit_type, details, recorded_at, device_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            values + (time.time(), device_id),
         ).lastrowid
     conn.commit()
     conn.close()
@@ -182,6 +192,32 @@ def patient_history(patient_id, limit: int = 5, exclude_visit_id=None):
     ).fetchall()
     conn.close()
     return [_visit_summary(r) for r in rows]
+
+
+def get_device_visits(device_id: str, limit: int = 30):
+    """Visits recorded from one browser, oldest first, so the demo page can show them again
+    after a reload. Only this browser knows its random device_id, so it only ever sees its
+    own visits - never everyone's (that's the password-protected admin page)."""
+    conn = _connect()
+    rows = conn.execute(
+        "SELECT * FROM visits WHERE device_id = ? ORDER BY recorded_at DESC LIMIT ?", (device_id, limit)
+    ).fetchall()
+    conn.close()
+    visits = []
+    for r in reversed(rows):
+        summary = _visit_summary(r)
+        visits.append({
+            "id": r["id"],
+            "recorded_at": summary["recorded_at"],
+            "patient_name": r["patient_name"],
+            "symptoms": summary["symptoms"],
+            "temp": summary["temp"],
+            "bp": summary["bp"],
+            "visit_type": summary["visit_type"],
+            "escalated": summary["escalated"],
+            "reason": r["reason"] or "",
+        })
+    return visits
 
 
 def get_visits(limit: int = 200):
