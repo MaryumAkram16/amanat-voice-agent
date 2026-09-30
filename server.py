@@ -77,15 +77,15 @@ if agents.REPLY_TEMPLATES and os.environ.get("TTS_PREWARM", "1").strip() not in 
     web_tts.prewarm(agents.FIXED_PHRASES)
 
 # Same list as stt_stream.py — Whisper-family models can hallucinate these from
-# silence/background noise regardless of the language actually being spoken.
+# silence/background noise regardless of the language actually being spoken. A turn containing
+# one ANYWHERE is dropped, so only phrases that never occur in a real visit note belong here.
 HALLUCINATION_PATTERNS = (
     "thanks for watching", "thank you for watching", "please subscribe", "subtitles by",
     "subtitles created by", "amara.org", "dimatorzok", "продолжение следует",
     "субтитры сделал", "obrigado", "ça va", "gracias por ver", "merci d'avoir regard",
-    "i'm proud to be relevant", "here we go", "so...", "or something", "my point is",
+    "i'm proud to be relevant",
     # Seen in the Railway logs (27 Sep): more "thanks for watching" variants from silence.
-    "ご視聴", "시청해", "terima kasih kerana menonton", "mulțumim pentru vizionare",
-    "see you next time", "be right back", "次回予告",
+    "ご視聴", "시청해", "terima kasih kerana menonton", "mulțumim pentru vizionare", "次回予告",
 )
 
 # Turns that consist ONLY of one of these (ignoring case and punctuation) are dropped. In the
@@ -93,9 +93,14 @@ HALLUCINATION_PATTERNS = (
 # queued ahead of her real sentences, and counted toward the hourly quota guard, which then
 # shut the pipeline off for real visits. Deliberately excludes yes/no/okay-style words: those can
 # be genuine answers to "same patient or a new one?".
+# Everyday English phrases ("or something", "here we go"...) live here rather than in
+# HALLUCINATION_PATTERNS: inside a real sentence ("Fatima ko bukhar hai or something") they
+# must not throw the whole visit away.
 FILLER_TURNS = {
     "thank you", "thank you very much", "thanks", "you", "gracias", "obrigado", "obrigada",
     "tchau", "adiós", "adios", "ciao", "ah ciao", "bye", "nice", "namely",
+    "so", "here we go", "or something", "my point is", "see you next time",
+    "be right back", "we'll be right back", "i'll be right back",
 }
 # Scripts no one speaks on this app (Cyrillic, Japanese kana, CJK, Hangul). Urdu, Punjabi,
 # English, Roman Urdu and Hindi (Devanagari) all pass.
@@ -106,14 +111,14 @@ _ACCENTED_LATIN = re.compile(r"[À-ÖØ-öø-ɏ]")
 
 
 def _looks_hallucinated(text: str) -> bool:
-    low = text.lower()
+    low = text.lower().replace("\u2019", "'")
     if any(p in low for p in HALLUCINATION_PATTERNS):
         return True
     if _FOREIGN_SCRIPT.search(text):
         return True
     if _ACCENTED_LATIN.search(text):
         return True
-    bare = re.sub(r"[\s.,!?¡¿…'\"-]+", " ", low).strip()
+    bare = re.sub(r"[\s.,!?¡¿…\"-]+", " ", low).strip()
     if bare in FILLER_TURNS:
         return True
     # The same filler said more than once ("Tchau, tchau.", "thank you thank you").
