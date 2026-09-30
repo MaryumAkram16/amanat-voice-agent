@@ -93,6 +93,8 @@ async function start() {
         const escalated = msg.triage.escalate ? " — ESCALATED (supervisor notified, simulated)" : "";
         log(`Recorded: ${msg.extracted.patient_name || "(no name given)"}${escalated}`);
         log(JSON.stringify(msg, null, 2));
+      } else if (msg.type === "error") {
+        log(`(error: ${msg.reason} — nothing recorded, please say it again)`);
       } else if (msg.type === "skip") {
         log("(off-topic — nothing recorded)");
       }
