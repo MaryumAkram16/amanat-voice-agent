@@ -501,6 +501,9 @@ TEMPLATE_RECORDED_NAMED = "{name} کا وزٹ ریکارڈ ہو گیا ہے۔"
 TEMPLATE_RECORDED = "وزٹ ریکارڈ ہو گیا ہے۔"
 TEMPLATE_URGENT_UPDATED = "مریض کی تفصیلات فوری کیس میں شامل کر دی گئی ہیں۔"
 TEMPLATE_SAME_OR_NEW = "کیا یہ اسی مریض کے بارے میں ہے، یا کسی نئے مریض کے بارے میں؟"
+# Said when the pipeline fails (Gemini error, no connection...), so she knows the visit was NOT
+# saved instead of hearing nothing. Always a fixed sentence: the LLM may be what just failed.
+TEMPLATE_PIPELINE_ERROR = "معاف کیجیے، یہ وزٹ ریکارڈ نہیں ہو سکا۔ براہ کرم دوبارہ بتائیں۔"
 
 # Follow-up questions, keyed by the English description find_missing() returns.
 _CARE_QUESTIONS_BY_KEY = {
@@ -522,7 +525,8 @@ for _items in care.CHECKLISTS.values():
             QUESTION_TEMPLATES[_desc] = _CARE_QUESTIONS_BY_KEY[_key]
 
 # Phrases with no name in them: synthesized once at startup so they play instantly.
-FIXED_PHRASES = [TEMPLATE_RECORDED, TEMPLATE_URGENT_UPDATED, TEMPLATE_SAME_OR_NEW] + sorted(set(QUESTION_TEMPLATES.values()))
+FIXED_PHRASES = [TEMPLATE_RECORDED, TEMPLATE_URGENT_UPDATED, TEMPLATE_SAME_OR_NEW,
+                 TEMPLATE_PIPELINE_ERROR] + sorted(set(QUESTION_TEMPLATES.values()))
 
 _URDU_NAME = re.compile(r"^[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿\s]+$")
 

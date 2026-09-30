@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from agents import (
     AMANAT_PERSONA,
     REPLY_TEMPLATES,
+    TEMPLATE_PIPELINE_ERROR,
     TEMPLATE_SAME_OR_NEW,
     TEMPLATE_URGENT_UPDATED,
     call_llm,
@@ -302,9 +303,25 @@ indicate either way)."""
         self._status("understanding")
         try:
             self._process_sync_inner(transcript)
+        except ClientGone:
+            raise
+        except Exception as e:
+            self._report_failure(e)
+            raise  # server.py logs the traceback
         finally:
             if not self.closed:
                 self._status("listening")
+
+    def _report_failure(self, error: Exception):
+        """Tell the browser (on screen and out loud) that this sentence was not recorded.
+        Best effort: if the browser is gone or TTS fails too, the original error still wins."""
+        if self.closed:
+            return
+        try:
+            self._send_json({"type": "error", "reason": type(error).__name__})
+            self._speak(TEMPLATE_PIPELINE_ERROR)
+        except Exception:
+            pass
 
     def _process_sync_inner(self, transcript: str):
 

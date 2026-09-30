@@ -844,6 +844,8 @@ async function startListening() {
         }
       } else if (msg.type === "skip") {
         addBubble("(off-topic — nothing recorded)", { tag: "Amanat" });
+      } else if (msg.type === "error") {
+        addBubble("Sorry — that wasn't recorded (the server hit an error). Please say it again.", { tag: "Amanat" });
       } else if (msg.type === "quota_exceeded") {
         addBubble("Amanat Health is at capacity right now — please try again in a few minutes.", { tag: "Amanat" });
       } else if (msg.type === "audio_start") {
