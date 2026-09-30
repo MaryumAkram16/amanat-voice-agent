@@ -82,7 +82,11 @@ _THINKING = types.ThinkingConfig(thinking_level=types.ThinkingLevel.MINIMAL)
 # no timeout, and it does no retries of its own), so one hung call used to stall the whole reply.
 # Railway logs (27 Sep): healthy calls took 0.4-2.2s, but some single calls took 10.7-18.9s.
 # Past GEMINI_TIMEOUT_S it's quicker to ask the next model than to keep waiting.
-GEMINI_TIMEOUT_S = float(os.environ.get("GEMINI_TIMEOUT_S", "8"))
+# The SDK sends this as the server-side request deadline, and the Gemini API rejects anything
+# under 10s with "400 INVALID_ARGUMENT: Manually set deadline ... is too short", failing every
+# call - so it's clamped to that minimum.
+GEMINI_MIN_TIMEOUT_S = 10.0
+GEMINI_TIMEOUT_S = max(GEMINI_MIN_TIMEOUT_S, float(os.environ.get("GEMINI_TIMEOUT_S", "10")))
 # A model that just timed out, was overloaded (503) or hit its per-minute limit is skipped for
 # this long, so every following turn doesn't pay the same failover delay again. It isn't
 # blacklisted: once the cooldown passes it's tried first again. 0 turns this off.

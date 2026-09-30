@@ -201,7 +201,7 @@ The time she waits = the speech recogniser deciding she has finished + Gemini + 
 | **Streaming audio** | The browser starts playing the first piece while the rest is still being made | `STREAM_AUDIO=0` |
 | Continuations analysed in parallel | The two analyses of a follow-up sentence run at the same time instead of one after the other | `PARALLEL_CONTINUATION=0` |
 | Visit saved while the reply is prepared | Database write and reply preparation overlap | — |
-| Gemini timeout + fast failover + cooldown | A stuck or overloaded model is abandoned after 8 s, a per-minute limit switches straight to the next model, and a failing model is skipped for 60 s | `GEMINI_TIMEOUT_S`, `MODEL_COOLDOWN_S` |
+| Gemini timeout + fast failover + cooldown | A stuck or overloaded model is abandoned after 10 s (the minimum the Gemini API accepts), a per-minute limit switches straight to the next model, and a failing model is skipped for 60 s | `GEMINI_TIMEOUT_S`, `MODEL_COOLDOWN_S` |
 | Hallucination filter | Junk transcripts from silence ("Thank you.", "ご視聴ありがとうございました", …) no longer cost a Gemini call, delay real sentences, or use up the hourly quota guard | — |
 
 ### How streaming works
@@ -331,7 +331,7 @@ Only the first four are required. Everything else has a safe default.
 | `DB_PATH` | `/data/amanat.db` if a volume is mounted | Where the SQLite file lives |
 | `MAX_PIPELINE_CALLS_PER_HOUR` | `150` | Circuit breaker against strangers draining the Gemini quota |
 | `TIMING_LOGS` | off | `1` prints `[timing]` latency lines for every turn |
-| `GEMINI_TIMEOUT_S` | `8` | Per-request Gemini timeout before trying the next model |
+| `GEMINI_TIMEOUT_S` | `10` | Per-request Gemini timeout before trying the next model (values below 10 are raised to 10 - the API rejects shorter deadlines) |
 | `MODEL_COOLDOWN_S` | `60` | How long a timed-out / overloaded model is skipped (`0` = off) |
 | `REPLY_TEMPLATES` | on | `0` = Gemini writes every reply instead of fixed Urdu sentences |
 | `PARALLEL_CONTINUATION` | on | `0` = run the two continuation analyses one after the other |
