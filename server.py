@@ -100,6 +100,9 @@ FILLER_TURNS = {
 # Scripts no one speaks on this app (Cyrillic, Japanese kana, CJK, Hangul). Urdu, Punjabi,
 # English, Roman Urdu and Hindi (Devanagari) all pass.
 _FOREIGN_SCRIPT = re.compile(r"[Ѐ-ӿ぀-ヿ一-鿿가-힯]")
+# Accented Latin letters (é, ç, ã, ñ...). Roman Urdu and English are typed without them, so a
+# turn containing one is a European-language hallucination (Railway logs, 30 Sep: "Félix").
+_ACCENTED_LATIN = re.compile(r"[À-ÖØ-öø-ɏ]")
 
 
 def _looks_hallucinated(text: str) -> bool:
@@ -108,8 +111,13 @@ def _looks_hallucinated(text: str) -> bool:
         return True
     if _FOREIGN_SCRIPT.search(text):
         return True
+    if _ACCENTED_LATIN.search(text):
+        return True
     bare = re.sub(r"[\s.,!?¡¿…'\"-]+", " ", low).strip()
-    return bare in FILLER_TURNS
+    if bare in FILLER_TURNS:
+        return True
+    # The same filler said more than once ("Tchau, tchau.", "thank you thank you").
+    return any(re.fullmatch(rf"{re.escape(f)}(?: {re.escape(f)})+", bare) for f in FILLER_TURNS)
 
 
 app = FastAPI()
