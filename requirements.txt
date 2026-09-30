@@ -1,6 +1,8 @@
-assemblyai
-google-genai
-edge-tts
-python-dotenv
-fastapi
-uvicorn[standard]
+# Pinned so a Railway rebuild can't pick up a breaking release unannounced. To upgrade, bump
+# a version here, test locally, then deploy.
+assemblyai==1.6.1
+google-genai==2.25.0
+edge-tts==7.2.8
+python-dotenv==1.2.3
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
